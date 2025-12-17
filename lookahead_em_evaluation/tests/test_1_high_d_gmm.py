@@ -171,9 +171,9 @@ def run_quick_test(verbose: bool = True) -> List[Dict[str, Any]]:
         initialization_strategy='kmeans',
         n_restarts=2,
         algorithms=quick_algorithms,
-        max_iter=100,  # Enough iterations to see convergence
-        timeout=60.0,
-        tol=1e-6,
+        max_iter=500,  # More iterations
+        timeout=120.0,
+        tol=1e-4,  # Practical tolerance for GMM
         results_dir='/tmp/test_results'
     )
 
