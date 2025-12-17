@@ -541,9 +541,9 @@ class LookaheadEM:
         elif 'A' in theta_base:
             # HMM parameters - gradient order: pi_0, A, B (see hmm.py:319-347)
             param_keys = ['pi_0', 'A', 'B']
-        elif 'gamma' in theta_base:
-            # MoE parameters - gradient order: gamma, sigma
-            param_keys = ['gamma', 'sigma']
+        elif 'beta' in theta_base:
+            # MoE parameters - gradient order: gamma, beta, sigma (see mixture_of_experts.py:320-341)
+            param_keys = ['gamma', 'beta', 'sigma']
         else:
             # Generic: iterate in sorted order
             param_keys = sorted(theta_base.keys())
