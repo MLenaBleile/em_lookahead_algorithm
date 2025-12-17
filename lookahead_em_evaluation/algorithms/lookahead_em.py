@@ -536,8 +536,9 @@ class LookaheadEM:
         # Determine parameter order based on model type
         # IMPORTANT: Must match the order used in compute_Q_gradient for each model
         if 'mu' in theta_base:
-            # GMM parameters - gradient order: mu, sigma, pi
-            param_keys = ['mu', 'sigma', 'pi']
+            # GMM parameters - gradient only covers mu (see gmm.py:253-289)
+            # sigma and pi are not in the gradient, copy them directly
+            param_keys = ['mu']
         elif 'A' in theta_base:
             # HMM parameters - gradient order: pi_0, A, B (see hmm.py:319-347)
             param_keys = ['pi_0', 'A', 'B']
@@ -547,6 +548,11 @@ class LookaheadEM:
         else:
             # Generic: iterate in sorted order
             param_keys = sorted(theta_base.keys())
+
+        # First, copy all parameters from theta_base that won't be modified by gradient
+        for key in theta_base:
+            if key not in param_keys:
+                theta_new[key] = np.asarray(theta_base[key]).copy()
 
         for key in param_keys:
             if key not in theta_base:
