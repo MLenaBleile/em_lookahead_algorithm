@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from algorithms.standard_em import StandardEM
 from algorithms.lookahead_em import LookaheadEM
+from algorithms.squarem_wrapper import get_squarem, PurePythonSQUAREM
 from utils.logging_utils import ExperimentLogger
 from utils.timing import ResourceMonitor
 
@@ -49,7 +50,7 @@ def create_algorithm(algo_config: Dict[str, Any], model: Any) -> Any:
         model: model instance (e.g., GaussianMixtureModel)
 
     Returns:
-        Algorithm instance (StandardEM or LookaheadEM)
+        Algorithm instance (StandardEM, LookaheadEM, or SQUAREM)
     """
     name = algo_config.get('name', 'standard_em')
     params = algo_config.get('params', {})
@@ -58,6 +59,8 @@ def create_algorithm(algo_config: Dict[str, Any], model: Any) -> Any:
         return StandardEM(model=model, **params)
     elif name in ['lookahead_em', 'lookahead']:
         return LookaheadEM(model=model, **params)
+    elif name in ['squarem', 'SQUAREM']:
+        return get_squarem(model)
     else:
         raise ValueError(f"Unknown algorithm: {name}")
 
@@ -193,7 +196,25 @@ def run_test(
         print(f"Generating data for {test_config.test_id}...")
 
     X, z, theta_true = test_config.data_generator()
-    n, d = X.shape
+
+    # Handle different data formats:
+    # - 2D array (GMM): X has shape (n, d)
+    # - 1D array (HMM): X has shape (T,)
+    # - Tuple (MoE): X is (X_features, y)
+    if isinstance(X, tuple):
+        # MoE case: X is (X_features, y)
+        X_features, _ = X
+        n, d = X_features.shape
+    elif hasattr(X, 'ndim'):
+        if X.ndim == 2:
+            n, d = X.shape
+        else:
+            n = len(X)
+            d = 1  # 1D sequence
+    else:
+        n = len(X)
+        d = 1
+
     K = len(np.unique(z))
 
     if verbose:
@@ -217,7 +238,12 @@ def run_test(
     for seed in range(test_config.n_restarts):
         theta_init = initializations[seed]
         for algo_config in test_config.algorithms:
-            trials.append((test_config, algo_config, seed, X.copy(), theta_init.copy(), theta_true))
+            # Handle tuple data (e.g., MoE with (X, y))
+            if isinstance(X, tuple):
+                X_copy = tuple(arr.copy() if hasattr(arr, 'copy') else arr for arr in X)
+            else:
+                X_copy = X.copy()
+            trials.append((test_config, algo_config, seed, X_copy, theta_init.copy(), theta_true))
 
     total_trials = len(trials)
     if verbose:
