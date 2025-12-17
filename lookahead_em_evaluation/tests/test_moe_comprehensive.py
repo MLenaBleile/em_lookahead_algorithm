@@ -28,7 +28,7 @@ from models.mixture_of_experts import (
 )
 from algorithms.standard_em import StandardEM
 from algorithms.lookahead_em import LookaheadEM
-from algorithms.squarem_wrapper import SQUAREM
+from algorithms.squarem_wrapper import SQUAREMWrapper as SQUAREM
 
 
 class MoEModelWrapper:
