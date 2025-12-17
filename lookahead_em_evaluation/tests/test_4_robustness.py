@@ -126,6 +126,7 @@ def run_quick_test(verbose: bool = True) -> Dict[str, List[Dict[str, Any]]]:
 
     quick_algorithms = [
         {'name': 'standard_em', 'params': {}},
+        {'name': 'lookahead_em', 'params': {'gamma': 'adaptive'}},
         {'name': 'squarem', 'params': {}},
     ]
 

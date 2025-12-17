@@ -257,9 +257,10 @@ def run_quick_test(verbose: bool = True) -> List[Dict[str, Any]]:
         X, Z, theta_true = test_2_hmm_small(seed=42)
         return X, Z, theta_true
 
-    # Only test 2 algorithms for speed
+    # Test algorithms including lookahead
     quick_algorithms = [
         {'name': 'standard_em', 'params': {}},
+        {'name': 'lookahead_em', 'params': {'gamma': 'adaptive'}},
         {'name': 'squarem', 'params': {}},
     ]
 

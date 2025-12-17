@@ -263,9 +263,10 @@ def run_quick_test(verbose: bool = True) -> List[Dict[str, Any]]:
         )
         return (X, y), experts, theta_true
 
-    # Only test 2 algorithms for speed
+    # Test algorithms including lookahead
     quick_algorithms = [
         {'name': 'standard_em', 'params': {}},
+        {'name': 'lookahead_em', 'params': {'gamma': 'adaptive'}},
         {'name': 'squarem', 'params': {}},
     ]
 
