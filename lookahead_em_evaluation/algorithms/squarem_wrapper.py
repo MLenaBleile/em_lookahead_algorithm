@@ -20,8 +20,15 @@ try:
     from rpy2.robjects.packages import importr
     _RPY2_AVAILABLE = True
 
-    # Activate automatic numpy conversion
-    numpy2ri.activate()
+    # Try to activate automatic numpy conversion (handle deprecation in newer rpy2)
+    # DeprecationWarning can be raised as an exception in some rpy2 versions
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            numpy2ri.activate()
+    except BaseException:
+        # Newer rpy2 versions deprecate activate() - skip it
+        pass
 
     # Try to import turboEM
     try:
@@ -31,7 +38,7 @@ try:
         warnings.warn(f"turboEM R package not available: {e}")
         _TURBOEM_AVAILABLE = False
 
-except ImportError as e:
+except BaseException as e:
     warnings.warn(f"rpy2 not available: {e}")
     _RPY2_AVAILABLE = False
 
