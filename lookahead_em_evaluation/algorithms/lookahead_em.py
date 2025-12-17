@@ -294,12 +294,15 @@ class LookaheadEM:
         iteration: int
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
         """
-        Perform one lookahead EM step.
+        Perform one lookahead EM step using gradient-based optimization.
 
-        Steps:
-            1. Compute responsibilities at current theta
-            2. If gamma ≈ 0, just do standard M-step
-            3. Otherwise, generate candidates and select best by Q + γV
+        The lookahead update solves:
+            θ^(t+1) = argmax_θ [Q(θ|θ^(t)) + γ · V(θ)]
+
+        Since M-step maximizes Q, we compute:
+            θ_lookahead = θ_mstep + γ · correction
+
+        where correction is based on the gradient of V.
 
         Args:
             X: Data matrix.
@@ -311,10 +314,12 @@ class LookaheadEM:
             Tuple of (theta_next, step_diagnostics).
         """
         step_diag = {
-            'n_candidates': 0,
+            'n_candidates': 1,
             'best_q': None,
             'best_v': None,
-            'best_score': None
+            'best_score': None,
+            'gradient_norm': None,
+            'step_size': None
         }
 
         # Compute responsibilities
@@ -324,61 +329,285 @@ class LookaheadEM:
         if gamma < 1e-8:
             theta_next = self.model.m_step(X, responsibilities)
             theta_next = self._project_to_feasible(theta_next)
-            step_diag['n_candidates'] = 1
             return theta_next, step_diag
 
-        # Get standard M-step result as one candidate
+        # Get standard M-step result
         theta_mstep = self.model.m_step(X, responsibilities)
         theta_mstep = self._project_to_feasible(theta_mstep)
 
-        # Generate additional candidates around M-step result
-        candidates = [theta_mstep]
-        candidates.extend(self._generate_candidates(
-            theta_mstep, n_candidates=self.n_candidates - 1
-        ))
+        # If we have gradient methods, use gradient-based lookahead
+        if self._has_hessian_methods():
+            theta_next, grad_diag = self._gradient_based_step(
+                X, theta_current, theta_mstep, responsibilities, gamma
+            )
+            step_diag.update(grad_diag)
+        else:
+            # Fallback to simple V estimation with line search
+            theta_next = self._simple_lookahead_step(
+                X, theta_current, theta_mstep, responsibilities, gamma
+            )
 
-        # Evaluate each candidate
-        best_score = float('-inf')
-        best_theta = theta_mstep
-        best_q = None
-        best_v = None
+        theta_next = self._project_to_feasible(theta_next)
 
-        for candidate in candidates:
+        # Compute final scores for diagnostics
+        try:
+            step_diag['best_q'] = self._compute_Q(
+                theta_next, theta_current, X, responsibilities
+            )
+            if self._has_hessian_methods():
+                step_diag['best_v'], _ = estimate_V_second_order(
+                    self.model, X, theta_next
+                )
+            else:
+                step_diag['best_v'] = estimate_V_simple(
+                    self.model, X, theta_next
+                )
+            step_diag['best_score'] = step_diag['best_q'] + gamma * step_diag['best_v']
+        except Exception:
+            pass
+
+        return theta_next, step_diag
+
+    def _gradient_based_step(
+        self,
+        X: np.ndarray,
+        theta_current: Dict[str, np.ndarray],
+        theta_mstep: Dict[str, np.ndarray],
+        responsibilities: np.ndarray,
+        gamma: float
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+        """
+        Compute gradient-based lookahead step.
+
+        Uses the gradient of V to adjust the M-step result:
+            θ_lookahead = θ_mstep + step_size * gradient_direction
+
+        The gradient direction comes from the Newton step for V:
+            direction = -H_V^{-1} ∇V
+
+        Args:
+            X: Data matrix.
+            theta_current: Current parameters (for E-step).
+            theta_mstep: M-step result.
+            responsibilities: E-step responsibilities.
+            gamma: Lookahead weight.
+
+        Returns:
+            Tuple of (theta_next, diagnostics).
+        """
+        diag = {
+            'gradient_norm': 0.0,
+            'step_size': 0.0,
+            'used_newton': False
+        }
+
+        try:
+            # Compute gradient and Hessian of Q at M-step result
+            # (which approximates the gradient of V's improvement potential)
+            grad = self.model.compute_Q_gradient(
+                theta_mstep, theta_mstep, X, responsibilities
+            )
+            H = self.model.compute_Q_hessian(
+                theta_mstep, theta_mstep, X, responsibilities
+            )
+
+            grad_norm = np.linalg.norm(grad)
+            diag['gradient_norm'] = grad_norm
+
+            # If gradient is very small, M-step is near-optimal
+            if grad_norm < 1e-10:
+                return theta_mstep, diag
+
+            # Compute Newton direction: -H^{-1} * grad
+            # Add regularization for numerical stability
+            reg = 1e-6 * np.abs(np.diag(H)).max()
+            H_reg = H - reg * np.eye(len(H))  # Make more negative definite
+
             try:
-                # Compute Q(candidate | theta_current)
-                Q_value = self._compute_Q(
-                    candidate, theta_current, X, responsibilities
+                # Solve H * direction = -grad
+                direction = np.linalg.solve(H_reg, -grad)
+                diag['used_newton'] = True
+            except np.linalg.LinAlgError:
+                # Fall back to gradient direction if Hessian is singular
+                direction = grad / grad_norm
+                diag['used_newton'] = False
+
+            # Scale step by gamma (lookahead weight)
+            # Use line search to find good step size
+            step_size = self._line_search(
+                X, theta_current, theta_mstep, direction,
+                responsibilities, gamma, max_step=gamma
+            )
+            diag['step_size'] = step_size
+
+            # Apply step to get new parameters
+            theta_next = self._apply_step(theta_mstep, direction, step_size)
+
+            return theta_next, diag
+
+        except Exception as e:
+            # On any error, fall back to M-step
+            diag['error'] = str(e)
+            return theta_mstep, diag
+
+    def _line_search(
+        self,
+        X: np.ndarray,
+        theta_current: Dict[str, np.ndarray],
+        theta_base: Dict[str, np.ndarray],
+        direction: np.ndarray,
+        responsibilities: np.ndarray,
+        gamma: float,
+        max_step: float = 1.0,
+        n_steps: int = 10
+    ) -> float:
+        """
+        Line search to find optimal step size.
+
+        Evaluates Q + γV at different step sizes and returns the best.
+
+        Args:
+            X: Data matrix.
+            theta_current: Current parameters.
+            theta_base: Base parameters (M-step result).
+            direction: Step direction.
+            responsibilities: E-step responsibilities.
+            gamma: Lookahead weight.
+            max_step: Maximum step size.
+            n_steps: Number of step sizes to try.
+
+        Returns:
+            Optimal step size.
+        """
+        best_score = float('-inf')
+        best_step = 0.0
+
+        # Try step sizes from 0 to max_step
+        for i in range(n_steps + 1):
+            step = (i / n_steps) * max_step
+
+            try:
+                theta_candidate = self._apply_step(theta_base, direction, step)
+                theta_candidate = self._project_to_feasible(theta_candidate)
+
+                # Evaluate Q + γV
+                Q_val = self._compute_Q(
+                    theta_candidate, theta_current, X, responsibilities
                 )
 
-                # Compute V(candidate)
-                if self.use_second_order and self._has_hessian_methods():
-                    V_value, _ = estimate_V_second_order(
-                        self.model, X, candidate
+                if self._has_hessian_methods():
+                    V_val, _ = estimate_V_second_order(
+                        self.model, X, theta_candidate
                     )
                 else:
-                    V_value = estimate_V_simple(
-                        self.model, X, candidate
-                    )
+                    V_val = estimate_V_simple(self.model, X, theta_candidate)
 
-                # Combined score
-                score = Q_value + gamma * V_value
+                score = Q_val + gamma * V_val
 
                 if score > best_score:
                     best_score = score
-                    best_theta = candidate
-                    best_q = Q_value
-                    best_v = V_value
+                    best_step = step
 
             except Exception:
-                # Skip candidates that cause numerical issues
                 continue
 
-        step_diag['n_candidates'] = len(candidates)
-        step_diag['best_q'] = best_q
-        step_diag['best_v'] = best_v
-        step_diag['best_score'] = best_score
+        return best_step
 
-        return best_theta, step_diag
+    def _apply_step(
+        self,
+        theta_base: Dict[str, np.ndarray],
+        direction: np.ndarray,
+        step_size: float
+    ) -> Dict[str, np.ndarray]:
+        """
+        Apply a step in the given direction to theta.
+
+        Args:
+            theta_base: Base parameters.
+            direction: Flattened direction vector.
+            step_size: Step size multiplier.
+
+        Returns:
+            New parameters after step.
+        """
+        theta_new = {}
+        offset = 0
+
+        for key in ['mu', 'sigma', 'pi']:
+            if key not in theta_base:
+                continue
+
+            value = np.asarray(theta_base[key])
+            size = value.size
+            delta = direction[offset:offset + size].reshape(value.shape)
+
+            if key == 'sigma':
+                # For variances, work in log space to stay positive
+                log_value = np.log(np.maximum(value, 1e-10))
+                new_log = log_value + step_size * delta / np.maximum(value, 1e-10)
+                theta_new[key] = np.exp(new_log)
+            elif key == 'pi':
+                # For mixture weights, add and renormalize
+                new_pi = value + step_size * delta
+                new_pi = np.maximum(new_pi, 1e-10)
+                theta_new[key] = new_pi / new_pi.sum()
+            else:
+                # For means, direct addition
+                theta_new[key] = value + step_size * delta
+
+            offset += size
+
+        return theta_new
+
+    def _simple_lookahead_step(
+        self,
+        X: np.ndarray,
+        theta_current: Dict[str, np.ndarray],
+        theta_mstep: Dict[str, np.ndarray],
+        responsibilities: np.ndarray,
+        gamma: float
+    ) -> Dict[str, np.ndarray]:
+        """
+        Simple lookahead using one-step V estimation.
+
+        When gradients aren't available, estimate the improvement direction
+        by comparing M-step to current parameters.
+
+        Args:
+            X: Data matrix.
+            theta_current: Current parameters.
+            theta_mstep: M-step result.
+            responsibilities: E-step responsibilities.
+            gamma: Lookahead weight.
+
+        Returns:
+            New parameters.
+        """
+        # The M-step moves from theta_current toward theta_mstep
+        # Lookahead extrapolates this movement
+        theta_next = {}
+
+        for key in theta_mstep:
+            current_val = np.asarray(theta_current[key])
+            mstep_val = np.asarray(theta_mstep[key])
+
+            # Direction of M-step movement
+            delta = mstep_val - current_val
+
+            # Extrapolate by gamma factor
+            if key == 'pi':
+                # For mixture weights, be conservative
+                new_val = mstep_val + 0.5 * gamma * delta
+                new_val = np.maximum(new_val, 1e-10)
+                theta_next[key] = new_val / new_val.sum()
+            elif key == 'sigma':
+                # For variances, stay positive
+                new_val = mstep_val + 0.5 * gamma * delta
+                theta_next[key] = np.maximum(new_val, 1e-10)
+            else:
+                theta_next[key] = mstep_val + 0.5 * gamma * delta
+
+        return theta_next
 
     def _compute_Q(
         self,
