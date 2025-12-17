@@ -117,10 +117,25 @@ def run_single_trial(
     }
 
     try:
-        # Create model instance
+        # Create model instance - detect dimensions from theta_init
+        # Support different model types: GMM (mu), HMM (A), MoE (gamma)
+        if 'mu' in theta_init:
+            n_components = theta_init['mu'].shape[0]
+            n_features = theta_init['mu'].shape[1]
+        elif 'A' in theta_init:
+            # HMM: A is (n_states, n_states), B is (n_states, n_obs)
+            n_components = theta_init['A'].shape[0]
+            n_features = theta_init['B'].shape[1] if 'B' in theta_init else theta_init['A'].shape[1]
+        elif 'gamma' in theta_init:
+            # MoE: gamma is (n_experts, n_features+1)
+            n_components = theta_init['gamma'].shape[0]
+            n_features = theta_init['gamma'].shape[1] - 1  # Subtract intercept
+        else:
+            raise ValueError(f"Cannot determine model dimensions from theta_init keys: {theta_init.keys()}")
+
         model = test_config.model_class(
-            n_components=theta_init['mu'].shape[0],
-            n_features=theta_init['mu'].shape[1]
+            n_components=n_components,
+            n_features=n_features
         )
 
         # Create algorithm
@@ -155,8 +170,20 @@ def run_single_trial(
 
         # Compute parameter error if true parameters available
         if theta_true is not None:
-            mu_error = np.linalg.norm(theta_final['mu'] - theta_true['mu']) / np.linalg.norm(theta_true['mu'])
-            result['mu_error'] = mu_error
+            try:
+                if 'mu' in theta_final and 'mu' in theta_true:
+                    mu_error = np.linalg.norm(theta_final['mu'] - theta_true['mu']) / np.linalg.norm(theta_true['mu'])
+                    result['param_error'] = mu_error
+                elif 'A' in theta_final and 'A' in theta_true:
+                    # HMM: compute error on transition matrix
+                    A_error = np.linalg.norm(theta_final['A'] - theta_true['A']) / np.linalg.norm(theta_true['A'])
+                    result['param_error'] = A_error
+                elif 'beta' in theta_final and 'beta' in theta_true:
+                    # MoE: compute error on expert weights
+                    beta_error = np.linalg.norm(theta_final['beta'] - theta_true['beta']) / np.linalg.norm(theta_true['beta'])
+                    result['param_error'] = beta_error
+            except Exception:
+                pass  # Skip parameter error if computation fails
 
     except Exception as e:
         result['error'] = str(e)

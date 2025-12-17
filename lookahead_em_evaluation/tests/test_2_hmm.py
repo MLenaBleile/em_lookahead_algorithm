@@ -104,11 +104,6 @@ def generate_hmm_init_wrapper(
         random_state=random_state
     )
 
-    # Add 'mu' key for compatibility with test_runner shape detection
-    for theta in inits:
-        # Use A shape as proxy for 'mu' shape
-        theta['mu'] = theta['A']
-
     return inits
 
 

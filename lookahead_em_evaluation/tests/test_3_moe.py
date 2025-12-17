@@ -105,9 +105,6 @@ def generate_moe_init_wrapper(
         else:
             theta = initialize_random(K, d, random_state=seed)
 
-        # Add 'mu' key for compatibility with test_runner shape detection
-        theta['mu'] = theta['gamma']  # Use gamma shape as proxy
-
         inits.append(theta)
 
     return inits
