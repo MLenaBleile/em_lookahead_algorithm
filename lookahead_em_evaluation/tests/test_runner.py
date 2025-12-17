@@ -271,6 +271,10 @@ def run_test(
         logger = ExperimentLogger(results_dir)
 
         for result in results:
+            # Skip results that don't have required fields (e.g., from parallel errors)
+            if 'algorithm' not in result:
+                continue
+
             # Convert numpy arrays to lists for JSON serialization
             result_copy = result.copy()
             if result_copy.get('theta_final') is not None:
@@ -281,7 +285,7 @@ def run_test(
             if result_copy.get('ll_history') is not None:
                 result_copy['ll_history'] = [float(x) for x in result_copy['ll_history']]
 
-            logger.log_run(result_copy['algorithm'], result_copy)
+            logger.log_run(result_copy.get('algorithm', 'unknown'), result_copy)
 
         if verbose:
             print(f"Results saved to {results_dir}/")
