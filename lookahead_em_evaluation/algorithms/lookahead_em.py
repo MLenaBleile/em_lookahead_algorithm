@@ -373,7 +373,7 @@ class LookaheadEM:
         X: np.ndarray,
         theta_current: Dict[str, np.ndarray],
         theta_mstep: Dict[str, np.ndarray],
-        responsibilities: np.ndarray,
+        responsibilities: Any,  # Can be np.ndarray (GMM) or dict (HMM)
         gamma: float
     ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
         """
@@ -456,7 +456,7 @@ class LookaheadEM:
         theta_current: Dict[str, np.ndarray],
         theta_base: Dict[str, np.ndarray],
         direction: np.ndarray,
-        responsibilities: np.ndarray,
+        responsibilities: Any,  # Can be np.ndarray (GMM) or dict (HMM)
         gamma: float,
         max_step: float = 1.0,
         n_steps: int = 10
@@ -533,26 +533,67 @@ class LookaheadEM:
         theta_new = {}
         offset = 0
 
-        for key in ['mu', 'sigma', 'pi']:
+        # Determine parameter order based on model type
+        # IMPORTANT: Must match the order used in compute_Q_gradient for each model
+        if 'mu' in theta_base:
+            # GMM parameters - gradient order: mu, sigma, pi
+            param_keys = ['mu', 'sigma', 'pi']
+        elif 'A' in theta_base:
+            # HMM parameters - gradient order: pi_0, A, B (see hmm.py:319-347)
+            param_keys = ['pi_0', 'A', 'B']
+        elif 'gamma' in theta_base:
+            # MoE parameters - gradient order: gamma, sigma
+            param_keys = ['gamma', 'sigma']
+        else:
+            # Generic: iterate in sorted order
+            param_keys = sorted(theta_base.keys())
+
+        for key in param_keys:
             if key not in theta_base:
                 continue
 
             value = np.asarray(theta_base[key])
             size = value.size
+
+            # Handle case where direction vector is smaller than expected
+            if offset + size > len(direction):
+                # Fall back to copying value unchanged
+                theta_new[key] = value.copy()
+                continue
+
             delta = direction[offset:offset + size].reshape(value.shape)
 
-            if key == 'sigma':
+            # Apply step based on parameter type
+            if key in ['sigma', 'variance', 'std']:
                 # For variances, work in log space to stay positive
                 log_value = np.log(np.maximum(value, 1e-10))
                 new_log = log_value + step_size * delta / np.maximum(value, 1e-10)
                 theta_new[key] = np.exp(new_log)
             elif key == 'pi':
-                # For mixture weights, add and renormalize
+                # For GMM mixture weights, add and renormalize
                 new_pi = value + step_size * delta
                 new_pi = np.maximum(new_pi, 1e-10)
                 theta_new[key] = new_pi / new_pi.sum()
+            elif key == 'pi_0':
+                # For HMM initial state distribution
+                new_pi = value + step_size * delta
+                new_pi = np.maximum(new_pi, 1e-10)
+                theta_new[key] = new_pi / new_pi.sum()
+            elif key == 'A':
+                # For HMM transition matrix (row-stochastic)
+                new_A = value + step_size * delta
+                new_A = np.maximum(new_A, 1e-10)
+                theta_new[key] = new_A / new_A.sum(axis=1, keepdims=True)
+            elif key == 'B':
+                # For HMM emission matrix (row-stochastic)
+                new_B = value + step_size * delta
+                new_B = np.maximum(new_B, 1e-10)
+                theta_new[key] = new_B / new_B.sum(axis=1, keepdims=True)
+            elif key == 'gamma' and value.ndim == 2:
+                # For MoE gate parameters (rows are coefficient vectors)
+                theta_new[key] = value + step_size * delta
             else:
-                # For means, direct addition
+                # For means and other unconstrained parameters
                 theta_new[key] = value + step_size * delta
 
             offset += size
@@ -564,7 +605,7 @@ class LookaheadEM:
         X: np.ndarray,
         theta_current: Dict[str, np.ndarray],
         theta_mstep: Dict[str, np.ndarray],
-        responsibilities: np.ndarray,
+        responsibilities: Any,
         gamma: float
     ) -> Dict[str, np.ndarray]:
         """
@@ -577,7 +618,7 @@ class LookaheadEM:
             X: Data matrix.
             theta_current: Current parameters.
             theta_mstep: M-step result.
-            responsibilities: E-step responsibilities.
+            responsibilities: E-step responsibilities (array or dict).
             gamma: Lookahead weight.
 
         Returns:
@@ -594,17 +635,28 @@ class LookaheadEM:
             # Direction of M-step movement
             delta = mstep_val - current_val
 
-            # Extrapolate by gamma factor
-            if key == 'pi':
-                # For mixture weights, be conservative
+            # Extrapolate by gamma factor based on parameter type
+            if key in ['pi', 'pi_0']:
+                # For probability vectors, be conservative and renormalize
                 new_val = mstep_val + 0.5 * gamma * delta
                 new_val = np.maximum(new_val, 1e-10)
                 theta_next[key] = new_val / new_val.sum()
-            elif key == 'sigma':
+            elif key in ['sigma', 'variance', 'std']:
                 # For variances, stay positive
                 new_val = mstep_val + 0.5 * gamma * delta
                 theta_next[key] = np.maximum(new_val, 1e-10)
+            elif key == 'A':
+                # For HMM transition matrix (row-stochastic)
+                new_val = mstep_val + 0.5 * gamma * delta
+                new_val = np.maximum(new_val, 1e-10)
+                theta_next[key] = new_val / new_val.sum(axis=1, keepdims=True)
+            elif key == 'B':
+                # For HMM emission matrix (row-stochastic)
+                new_val = mstep_val + 0.5 * gamma * delta
+                new_val = np.maximum(new_val, 1e-10)
+                theta_next[key] = new_val / new_val.sum(axis=1, keepdims=True)
             else:
+                # For means and other unconstrained parameters
                 theta_next[key] = mstep_val + 0.5 * gamma * delta
 
         return theta_next
@@ -699,7 +751,8 @@ class LookaheadEM:
 
         Ensures:
         - Positive parameters (sigma) are > 0
-        - Simplex parameters (pi) sum to 1 and are > 0
+        - Simplex parameters (pi, pi_0) sum to 1 and are > 0
+        - Row-stochastic matrices (A, B) have rows that sum to 1
 
         Args:
             theta: Parameters to project.
@@ -713,10 +766,18 @@ class LookaheadEM:
             if key in ['sigma', 'variance', 'std']:
                 # Ensure positive
                 theta[key] = np.maximum(value, 1e-6)
-            elif key in ['pi', 'weights', 'mixing']:
-                # Project to simplex
+            elif key in ['pi', 'pi_0', 'weights', 'mixing']:
+                # Project to simplex (1D probability vector)
                 value = np.maximum(value, 1e-6)
                 theta[key] = value / value.sum()
+            elif key == 'A':
+                # HMM transition matrix: row-stochastic
+                value = np.maximum(value, 1e-6)
+                theta[key] = value / value.sum(axis=1, keepdims=True)
+            elif key == 'B':
+                # HMM emission matrix: row-stochastic
+                value = np.maximum(value, 1e-6)
+                theta[key] = value / value.sum(axis=1, keepdims=True)
 
         return theta
 
