@@ -126,7 +126,7 @@ Comprehensive evaluation with 1,080 runs across 12 configurations:
 | Lookahead EM | 345/360 (95.8%) | **-988.44 ± 360.53** | 43.50 ± 45.17 | 75 ± 64 |
 | SQUAREM | 0/360 (0%)* | N/A | N/A | N/A |
 
-*SQUAREM requires R's turboEM package (rpy2 not installed in test environment)
+*SQUAREM results not available: test uses `SQUAREMWrapper` directly instead of `get_squarem()` fallback
 
 **Key Finding:** Lookahead EM achieves significantly better solution quality:
 - **98.9% win rate** over Standard EM (177/179 paired comparisons)

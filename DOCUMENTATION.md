@@ -196,7 +196,7 @@ A comprehensive evaluation was conducted with 1,080 runs across 12 configuration
 | Lookahead EM | 345 | **-988.44 ± 360.53** | 43.50 ± 45.17 | 75 ± 64 |
 | SQUAREM | 0* | N/A | N/A | N/A |
 
-*SQUAREM failed all runs (requires rpy2 and R's turboEM package)
+*SQUAREM: test uses `SQUAREMWrapper` directly; use `get_squarem()` for pure Python fallback
 
 **Statistical Analysis:**
 
@@ -300,12 +300,11 @@ Results saved to `results/moe_comprehensive_TIMESTAMP.json` with:
 
 2. **HMM Computational Cost**: Forward-backward is O(T × S²), making gradient-based lookahead expensive.
 
-3. **SQUAREM Dependencies**: SQUAREM requires rpy2 and R's turboEM package. Install with:
-   ```bash
-   pip install rpy2
-   R -e "install.packages('turboEM')"
+3. **SQUAREM Usage**: The `SQUAREMWrapper` class requires rpy2 and R's turboEM package. For environments without R, use `get_squarem()` which automatically falls back to `PurePythonSQUAREM`:
+   ```python
+   from algorithms.squarem_wrapper import get_squarem
+   squarem = get_squarem(model)  # Uses pure Python fallback if R unavailable
    ```
-   Without these, SQUAREM tests will fail with dependency errors.
 
 4. **Windows Compatibility**: R-based SQUAREM may not work on Windows; pure Python fallback behavior varies.
 
