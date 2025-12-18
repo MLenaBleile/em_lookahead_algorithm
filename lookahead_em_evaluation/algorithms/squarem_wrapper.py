@@ -621,12 +621,8 @@ def test_is_available():
 
 def test_pure_python_squarem():
     """Test pure Python SQUAREM on toy GMM."""
-    import sys
-    import os
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-    from models.gmm import GaussianMixtureModel
-    from data.generate_gmm import generate_gmm_data
+    from lookahead_em_evaluation.models.gmm import GaussianMixtureModel
+    from lookahead_em_evaluation.data.generate_gmm import generate_gmm_data
 
     # Generate simple data
     X, z, theta_true = generate_gmm_data(n=200, K=3, d=2, seed=42)
@@ -658,11 +654,7 @@ def test_pure_python_squarem():
 
 def test_get_squarem():
     """Test get_squarem factory function."""
-    import sys
-    import os
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-    from models.gmm import GaussianMixtureModel
+    from lookahead_em_evaluation.models.gmm import GaussianMixtureModel
 
     model = GaussianMixtureModel(n_components=3, n_features=2)
     squarem = get_squarem(model)
@@ -681,11 +673,7 @@ def test_vector_conversion():
         print("  SKIPPED (rpy2 not available)")
         return
 
-    import sys
-    import os
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-    from models.gmm import GaussianMixtureModel
+    from lookahead_em_evaluation.models.gmm import GaussianMixtureModel
 
     model = GaussianMixtureModel(n_components=3, n_features=2)
     wrapper = SQUAREMWrapper(model)

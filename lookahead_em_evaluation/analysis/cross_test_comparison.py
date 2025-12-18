@@ -12,11 +12,8 @@ from typing import Dict, List, Any, Optional, Tuple
 from scipy import stats
 import warnings
 
-# Add parent to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from utils.logging_utils import ExperimentLogger
-from utils.metrics import cohens_d
+from lookahead_em_evaluation.utils.logging_utils import ExperimentLogger
+from lookahead_em_evaluation.utils.metrics import cohens_d
 
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors

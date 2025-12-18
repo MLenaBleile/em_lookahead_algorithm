@@ -16,14 +16,14 @@ import warnings
 import os
 import sys
 
-# Add parent to path for imports
+# Add repo root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from algorithms.standard_em import StandardEM
-from algorithms.lookahead_em import LookaheadEM
-from algorithms.squarem_wrapper import get_squarem, PurePythonSQUAREM
-from utils.logging_utils import ExperimentLogger
-from utils.timing import ResourceMonitor
+from lookahead_em_evaluation.algorithms.standard_em import StandardEM
+from lookahead_em_evaluation.algorithms.lookahead_em import LookaheadEM
+from lookahead_em_evaluation.algorithms.squarem_wrapper import get_squarem, PurePythonSQUAREM
+from lookahead_em_evaluation.utils.logging_utils import ExperimentLogger
+from lookahead_em_evaluation.utils.timing import ResourceMonitor
 
 
 @dataclass
@@ -251,7 +251,7 @@ def run_test(
     if verbose:
         print(f"Generating {test_config.n_restarts} initializations...")
 
-    from data.generate_gmm import generate_initializations
+    from lookahead_em_evaluation.data.generate_gmm import generate_initializations
     initializations = generate_initializations(
         X=X,
         K=K,
@@ -424,8 +424,8 @@ def test_create_algorithm():
 
 def test_run_single_trial():
     """Test running a single trial."""
-    from models.gmm import GaussianMixtureModel
-    from data.generate_gmm import generate_gmm_data
+    from lookahead_em_evaluation.models.gmm import GaussianMixtureModel
+    from lookahead_em_evaluation.data.generate_gmm import generate_gmm_data
 
     # Simple config
     X, z, theta_true = generate_gmm_data(n=100, K=3, d=2, seed=42)
@@ -497,8 +497,8 @@ def test_run_single_trial_error_handling():
 
 def test_run_test_sequential():
     """Test running a full test sequentially."""
-    from models.gmm import GaussianMixtureModel
-    from data.generate_gmm import generate_gmm_data
+    from lookahead_em_evaluation.models.gmm import GaussianMixtureModel
+    from lookahead_em_evaluation.data.generate_gmm import generate_gmm_data
 
     config = TestConfig(
         test_id='test_sequential',

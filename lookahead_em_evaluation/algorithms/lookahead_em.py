@@ -21,11 +21,11 @@ import copy
 import numpy as np
 from typing import Dict, List, Tuple, Any, Optional, Union
 
-from utils.timing import ResourceMonitor
-from algorithms.gamma_schedule import (
+from lookahead_em_evaluation.utils.timing import ResourceMonitor
+from lookahead_em_evaluation.algorithms.gamma_schedule import (
     GammaSchedule, FixedGamma, AdaptiveGamma, ExponentialGamma, create_schedule
 )
-from algorithms.value_estimation import estimate_V_second_order, estimate_V_simple
+from lookahead_em_evaluation.algorithms.value_estimation import estimate_V_second_order, estimate_V_simple
 
 
 class LookaheadEM:
@@ -1065,7 +1065,7 @@ def test_lookahead_em_gamma_zero():
     theta_la, diag_la = lookahead.fit(X, theta_init.copy(), max_iter=20)
 
     # Standard EM (import here to avoid circular imports in real code)
-    from algorithms.standard_em import StandardEM
+    from lookahead_em_evaluation.algorithms.standard_em import StandardEM
     standard = StandardEM(model, verbose=False)
     theta_std, diag_std = standard.fit(X, theta_init.copy(), max_iter=20)
 

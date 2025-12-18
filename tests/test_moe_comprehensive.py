@@ -19,16 +19,16 @@ from typing import Dict, List, Any, Tuple
 from itertools import product
 from tqdm import tqdm
 
-# Add parent to path for imports
+# Add repo root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.mixture_of_experts import (
+from lookahead_em_evaluation.models.mixture_of_experts import (
     MixtureOfExperts, generate_moe_data,
     initialize_random, initialize_equal_gates
 )
-from algorithms.standard_em import StandardEM
-from algorithms.lookahead_em import LookaheadEM
-from algorithms.squarem_wrapper import SQUAREMWrapper as SQUAREM
+from lookahead_em_evaluation.algorithms.standard_em import StandardEM
+from lookahead_em_evaluation.algorithms.lookahead_em import LookaheadEM
+from lookahead_em_evaluation.algorithms.squarem_wrapper import SQUAREMWrapper as SQUAREM
 
 
 class MoEModelWrapper:

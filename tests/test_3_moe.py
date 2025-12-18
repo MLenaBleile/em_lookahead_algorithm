@@ -1,84 +1,87 @@
 """
-Test 2: Hidden Markov Model
+Test 3: Mixture of Experts
 
-Implements Test 2 from EMPIRICAL_TEST_SPECIFICATIONS.md.
-Tests EM algorithms on HMM with S=20 states, V=50 observations, T=1000 steps.
+Implements Test 3 from EMPIRICAL_TEST_SPECIFICATIONS.md.
+Tests EM algorithms on MoE with G=5 experts, d=2 features, n=2000 samples.
 
 This test evaluates:
-1. Convergence speed with structured latent space
-2. Preservation of transition sparsity
-3. Algorithm stability with constraint enforcement
+1. Convergence in regression setting
+2. Expert utilization (all experts used)
+3. Block-diagonal Hessian exploitation
 """
 
 import os
 import sys
 import numpy as np
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple, Union
 
-# Add parent to path for imports
+# Add repo root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from data.generate_hmm import test_2_hmm, generate_hmm_initializations
-from models.hmm import HiddenMarkovModel
+from lookahead_em_evaluation.models.mixture_of_experts import (
+    MixtureOfExperts, test_3_moe, generate_moe_data,
+    initialize_random, initialize_equal_gates
+)
 from tests.test_runner import TestConfig, run_test
 
 
-class HMMTestAdapter:
+class MoETestAdapter:
     """
-    Adapter to make HMM compatible with test_runner infrastructure.
+    Adapter to make MoE compatible with test_runner infrastructure.
 
-    The test_runner expects a model that takes (n_components, n_features) in __init__
-    and works with theta_init having 'mu' key for shape detection.
+    The test_runner expects (n_components, n_features) constructor and theta with 'mu' key.
     """
 
     def __init__(self, n_components: int, n_features: int):
         """
-        Initialize HMM adapter.
+        Initialize MoE adapter.
 
-        For HMM: n_components = n_states, n_features = n_observations
+        For MoE: n_components = n_experts, n_features = n_features
         """
-        self.n_states = n_components
-        self.n_obs = n_features
-        self.hmm = HiddenMarkovModel(n_states=n_components, n_observations=n_features)
+        self.n_experts = n_components
+        self.n_features = n_features
+        self.moe = MixtureOfExperts(n_experts=n_components, n_features=n_features)
+        self._X = None
+        self._y = None
 
-    def e_step(self, X: np.ndarray, theta: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    def e_step(self, data: Tuple[np.ndarray, np.ndarray], theta: Dict[str, np.ndarray]) -> np.ndarray:
         """E-step wrapper."""
-        return self.hmm.e_step(X, theta)
+        return self.moe.e_step(data, theta)
 
-    def m_step(self, X: np.ndarray, responsibilities: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+    def m_step(self, data: Tuple[np.ndarray, np.ndarray], responsibilities: np.ndarray) -> Dict[str, np.ndarray]:
         """M-step wrapper."""
-        return self.hmm.m_step(X, responsibilities)
+        return self.moe.m_step(data, responsibilities)
 
-    def log_likelihood(self, X: np.ndarray, theta: Dict[str, np.ndarray]) -> float:
+    def log_likelihood(self, data: Tuple[np.ndarray, np.ndarray], theta: Dict[str, np.ndarray]) -> float:
         """Log-likelihood wrapper."""
-        return self.hmm.log_likelihood(X, theta)
+        return self.moe.log_likelihood(data, theta)
 
-    def compute_Q(self, theta, theta_old, X, responsibilities) -> float:
+    def compute_Q(self, theta, theta_old, data, responsibilities) -> float:
         """Q-function wrapper."""
-        return self.hmm.compute_Q(theta, theta_old, X, responsibilities)
+        return self.moe.compute_Q(theta, theta_old, data, responsibilities)
 
-    def compute_Q_gradient(self, theta, theta_old, X, responsibilities) -> np.ndarray:
+    def compute_Q_gradient(self, theta, theta_old, data, responsibilities) -> np.ndarray:
         """Gradient wrapper."""
-        return self.hmm.compute_Q_gradient(theta, theta_old, X, responsibilities)
+        return self.moe.compute_Q_gradient(theta, theta_old, data, responsibilities)
 
-    def compute_Q_hessian(self, theta, theta_old, X, responsibilities) -> np.ndarray:
+    def compute_Q_hessian(self, theta, theta_old, data, responsibilities) -> np.ndarray:
         """Hessian wrapper."""
-        return self.hmm.compute_Q_hessian(theta, theta_old, X, responsibilities)
+        return self.moe.compute_Q_hessian(theta, theta_old, data, responsibilities)
 
 
-def generate_hmm_init_wrapper(
-    X: np.ndarray,
+def generate_moe_init_wrapper(
+    X: Any,  # Can be tuple (X_features, y) or just X_features
     K: int,
     strategy: str,
     n_inits: int,
     random_state: int
 ) -> List[Dict[str, np.ndarray]]:
     """
-    Wrapper for HMM initialization compatible with test_runner.
+    Generate MoE initializations.
 
     Args:
-        X: Observation sequence
-        K: Number of states (used as n_states)
+        X: Data - can be tuple (X_features, y) or just X_features
+        K: Number of experts
         strategy: Initialization strategy
         n_inits: Number of initializations
         random_state: Random seed
@@ -86,47 +89,46 @@ def generate_hmm_init_wrapper(
     Returns:
         List of theta_init dicts with 'mu' key added for compatibility
     """
-    # Infer n_obs from the observation sequence
-    n_obs = int(X.max()) + 1
+    # Handle tuple input from test_runner
+    if isinstance(X, tuple):
+        X_features, y = X
+        d = X_features.shape[1]
+    else:
+        d = X.shape[1] if X.ndim == 2 else 1
 
-    # Map strategy names
-    if strategy == 'kmeans':
-        strategy = 'empirical'  # Use empirical for HMM
-    elif strategy == 'random':
-        strategy = 'random'
+    inits = []
+    for i in range(n_inits):
+        seed = random_state + i
 
-    inits = generate_hmm_initializations(
-        observations=X,
-        n_states=K,
-        n_obs=n_obs,
-        strategy=strategy,
-        n_inits=n_inits,
-        random_state=random_state
-    )
+        if strategy in ['kmeans', 'equal_gates']:
+            theta = initialize_equal_gates(K, d, random_state=seed)
+        else:
+            theta = initialize_random(K, d, random_state=seed)
+
+        inits.append(theta)
 
     return inits
 
 
-# Monkey-patch the initialization function for HMM tests
-import data.generate_gmm as gmm_module
+# Monkey-patch support
+import lookahead_em_evaluation.data.generate_gmm as gmm_module
 _original_generate_inits = gmm_module.generate_initializations
 
 
-def load_test_2_config(
-    n_restarts: int = 20,
-    max_iter: int = 1000,
-    timeout: float = 600.0,
+def load_test_3_config(
+    n_restarts: int = 30,
+    max_iter: int = 500,
+    timeout: float = 300.0,
     tol: float = 1e-6,
     results_dir: str = None
 ) -> TestConfig:
     """
-    Load Test 2 configuration.
+    Load Test 3 configuration.
 
     Configuration from EMPIRICAL_TEST_SPECIFICATIONS.md:
-    - S = 20 states
-    - V = 50 observations
-    - T = 1000 steps
-    - Nearly diagonal transition (0.7 self-transition)
+    - G = 5 experts
+    - d = 2 features
+    - n = 2000 samples
 
     Args:
         n_restarts: Number of random restarts per algorithm
@@ -149,24 +151,31 @@ def load_test_2_config(
         # Standard EM baseline
         {'name': 'standard_em', 'params': {}},
 
+        # Lookahead EM with various gamma values
+        {'name': 'lookahead_em', 'params': {'gamma': 0.2}},
+        {'name': 'lookahead_em', 'params': {'gamma': 0.4}},
+        {'name': 'lookahead_em', 'params': {'gamma': 0.6}},
+        {'name': 'lookahead_em', 'params': {'gamma': 0.8}},
+
         # Lookahead EM with adaptive gamma
         {'name': 'lookahead_em', 'params': {'gamma': 'adaptive'}},
 
-        # SQUAREM (uses pure Python fallback)
+        # SQUAREM
         {'name': 'squarem', 'params': {}},
     ]
 
-    # Custom data generator that returns proper format
-    def hmm_data_generator():
-        X, Z, theta_true = test_2_hmm(seed=42)
-        # Return format: (X, z, theta_true)
-        return X, Z, theta_true
+    # Custom data generator
+    def moe_data_generator():
+        X, y, experts, theta_true = test_3_moe(seed=42)
+        # Return as tuple (X_combined, experts, theta_true)
+        # where X_combined has y appended for passing through test runner
+        return (X, y), experts, theta_true
 
     config = TestConfig(
-        test_id='test_2_hmm',
-        data_generator=hmm_data_generator,
-        model_class=HMMTestAdapter,
-        initialization_strategy='random',  # Will be mapped to HMM strategy
+        test_id='test_3_moe',
+        data_generator=moe_data_generator,
+        model_class=MoETestAdapter,
+        initialization_strategy='equal_gates',
         n_restarts=n_restarts,
         algorithms=algorithms,
         max_iter=max_iter,
@@ -178,15 +187,15 @@ def load_test_2_config(
     return config
 
 
-def run_test_2(
-    n_restarts: int = 20,
+def run_test_3(
+    n_restarts: int = 30,
     parallel: bool = True,
     n_jobs: int = 8,
     verbose: bool = True,
     save_results: bool = True
 ) -> List[Dict[str, Any]]:
     """
-    Run Test 2: HMM experiment.
+    Run Test 3: MoE experiment.
 
     Args:
         n_restarts: Number of random restarts per algorithm
@@ -198,16 +207,16 @@ def run_test_2(
     Returns:
         List of run result dictionaries
     """
-    config = load_test_2_config(n_restarts=n_restarts)
+    config = load_test_3_config(n_restarts=n_restarts)
 
     if verbose:
         print("=" * 60)
-        print("Test 2: Hidden Markov Model")
+        print("Test 3: Mixture of Experts")
         print("=" * 60)
         print(f"Configuration:")
-        print(f"  S = 20 states")
-        print(f"  V = 50 observations")
-        print(f"  T = 1000 steps")
+        print(f"  G = 5 experts")
+        print(f"  d = 2 features")
+        print(f"  n = 2000 samples")
         print(f"  n_restarts = {n_restarts}")
         print(f"  max_iter = {config.max_iter}")
         print(f"  timeout = {config.timeout}s")
@@ -220,8 +229,8 @@ def run_test_2(
                 print(f"    - {algo['name']}")
         print("=" * 60)
 
-    # Temporarily replace initialization function
-    gmm_module.generate_initializations = generate_hmm_init_wrapper
+    # Custom initialization function for MoE
+    gmm_module.generate_initializations = generate_moe_init_wrapper
 
     try:
         results = run_test(
@@ -232,7 +241,6 @@ def run_test_2(
             save_results=save_results
         )
     finally:
-        # Restore original function
         gmm_module.generate_initializations = _original_generate_inits
 
     return results
@@ -240,9 +248,7 @@ def run_test_2(
 
 def run_quick_test(verbose: bool = True) -> List[Dict[str, Any]]:
     """
-    Run a quick version of Test 2 for validation.
-
-    Uses fewer restarts and smaller HMM.
+    Run a quick version of Test 3 for validation.
 
     Args:
         verbose: Whether to print progress
@@ -250,12 +256,12 @@ def run_quick_test(verbose: bool = True) -> List[Dict[str, Any]]:
     Returns:
         List of run result dictionaries
     """
-    from data.generate_hmm import test_2_hmm_small, generate_hmm_initializations
-
-    # Use smaller HMM for quick test
+    # Smaller MoE for quick test
     def quick_data_generator():
-        X, Z, theta_true = test_2_hmm_small(seed=42)
-        return X, Z, theta_true
+        X, y, experts, theta_true = generate_moe_data(
+            n=200, n_experts=3, n_features=2, seed=42
+        )
+        return (X, y), experts, theta_true
 
     # Test algorithms including lookahead
     quick_algorithms = [
@@ -265,26 +271,25 @@ def run_quick_test(verbose: bool = True) -> List[Dict[str, Any]]:
     ]
 
     config = TestConfig(
-        test_id='test_2_quick',
+        test_id='test_3_quick',
         data_generator=quick_data_generator,
-        model_class=HMMTestAdapter,
-        initialization_strategy='random',
+        model_class=MoETestAdapter,
+        initialization_strategy='equal_gates',
         n_restarts=2,
         algorithms=quick_algorithms,
         max_iter=100,
-        timeout=120.0,
+        timeout=60.0,
         tol=1e-4,
         results_dir='/tmp/test_results'
     )
 
     if verbose:
         print("=" * 60)
-        print("Test 2: Quick Validation Run")
-        print("  (Using S=5, V=10, T=200 for faster execution)")
+        print("Test 3: Quick Validation Run")
+        print("  (Using G=3, d=2, n=200 for faster execution)")
         print("=" * 60)
 
-    # Replace initialization function
-    gmm_module.generate_initializations = generate_hmm_init_wrapper
+    gmm_module.generate_initializations = generate_moe_init_wrapper
 
     try:
         results = run_test(
@@ -299,9 +304,9 @@ def run_quick_test(verbose: bool = True) -> List[Dict[str, Any]]:
     return results
 
 
-def summarize_test_2_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def summarize_test_3_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Generate summary statistics for Test 2 results.
+    Generate summary statistics for Test 3 results.
 
     Args:
         results: List of run result dictionaries
@@ -317,10 +322,9 @@ def summarize_test_2_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         algo = r.get('algorithm', 'unknown')
         params = r.get('algorithm_params', {})
 
-        # Create unique key
         if params:
             gamma = params.get('gamma', '')
-            key = f"{algo}_gamma_{gamma}"
+            key = f"{algo}_gamma_{gamma}" if gamma else algo
         else:
             key = algo
 
@@ -328,16 +332,13 @@ def summarize_test_2_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
             by_algo[key] = []
         by_algo[key].append(r)
 
-    # Compute statistics for each algorithm
     for key, algo_results in by_algo.items():
         n_total = len(algo_results)
         n_converged = sum(1 for r in algo_results if r.get('converged', False))
         n_errors = sum(1 for r in algo_results if r.get('error') is not None)
 
-        # Filter successful runs
         successful = [r for r in algo_results if r.get('error') is None]
 
-        # Extract metrics
         final_lls = [r['final_ll'] for r in successful if r.get('final_ll', float('-inf')) > float('-inf')]
         times = [r['elapsed_time'] for r in successful if r.get('elapsed_time', 0) > 0]
         iters = [r['n_iterations'] for r in successful if r.get('n_iterations', 0) > 0]
@@ -362,10 +363,9 @@ def summarize_test_2_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 def print_summary(summary: Dict[str, Any]) -> None:
     """Print formatted summary statistics."""
     print("\n" + "=" * 80)
-    print("Test 2 Results Summary")
+    print("Test 3 Results Summary")
     print("=" * 80)
 
-    # Sort by final_ll_mean descending
     sorted_keys = sorted(
         summary.keys(),
         key=lambda k: summary[k].get('final_ll_mean', float('-inf')),
@@ -393,17 +393,18 @@ def print_summary(summary: Dict[str, Any]) -> None:
 
 def test_config_loading():
     """Test that configuration loads correctly."""
-    config = load_test_2_config(n_restarts=5)
+    config = load_test_3_config(n_restarts=5)
 
-    assert config.test_id == 'test_2_hmm', "Test ID mismatch"
+    assert config.test_id == 'test_3_moe', "Test ID mismatch"
     assert config.n_restarts == 5, "n_restarts mismatch"
     assert len(config.algorithms) > 0, "No algorithms defined"
 
     # Test data generator
-    X, z, theta_true = config.data_generator()
-    assert len(X) == 1000, f"X length: {len(X)}"
-    assert theta_true['A'].shape == (20, 20), f"A shape: {theta_true['A'].shape}"
-    assert theta_true['B'].shape == (20, 50), f"B shape: {theta_true['B'].shape}"
+    data, experts, theta_true = config.data_generator()
+    X, y = data
+    assert X.shape == (2000, 2), f"X shape: {X.shape}"
+    assert y.shape == (2000,), f"y shape: {y.shape}"
+    assert theta_true['gamma'].shape == (5, 3), f"gamma shape: {theta_true['gamma'].shape}"
 
     print("  PASSED")
 
@@ -414,7 +415,6 @@ def test_quick_run():
 
     assert len(results) > 0, "No results returned"
 
-    # Check all results have required fields
     for r in results:
         assert 'algorithm' in r, "Missing algorithm field"
         assert 'seed' in r, "Missing seed field"
@@ -424,23 +424,20 @@ def test_quick_run():
 
 def test_summary_generation():
     """Test summary statistics generation."""
-    # Create mock results
     results = [
         {'algorithm': 'standard_em', 'algorithm_params': {}, 'converged': True,
-         'final_ll': -800.0, 'elapsed_time': 5.0, 'n_iterations': 50, 'error': None},
+         'final_ll': -200.0, 'elapsed_time': 2.0, 'n_iterations': 30, 'error': None},
         {'algorithm': 'standard_em', 'algorithm_params': {}, 'converged': True,
-         'final_ll': -790.0, 'elapsed_time': 4.5, 'n_iterations': 45, 'error': None},
+         'final_ll': -195.0, 'elapsed_time': 1.8, 'n_iterations': 28, 'error': None},
         {'algorithm': 'squarem', 'algorithm_params': {}, 'converged': True,
-         'final_ll': -785.0, 'elapsed_time': 3.0, 'n_iterations': 25, 'error': None},
+         'final_ll': -190.0, 'elapsed_time': 1.2, 'n_iterations': 15, 'error': None},
     ]
 
-    summary = summarize_test_2_results(results)
+    summary = summarize_test_3_results(results)
 
-    assert 'standard_em' in summary, "Missing standard_em in summary"
-    assert 'squarem' in summary, "Missing squarem in summary"
-
-    assert summary['standard_em']['n_total'] == 2, "Wrong count for standard_em"
-    assert summary['standard_em']['convergence_rate'] == 1.0, "Wrong convergence rate"
+    assert 'standard_em' in summary, "Missing standard_em"
+    assert 'squarem' in summary, "Missing squarem"
+    assert summary['standard_em']['n_total'] == 2, "Wrong count"
 
     print("  PASSED")
 
@@ -448,7 +445,7 @@ def test_summary_generation():
 def run_all_tests():
     """Run all unit tests."""
     print("=" * 60)
-    print("Running test_2_hmm.py unit tests")
+    print("Running test_3_moe.py unit tests")
     print("=" * 60)
 
     print("Testing config loading...")
@@ -468,10 +465,10 @@ def run_all_tests():
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Test 2: HMM")
+    parser = argparse.ArgumentParser(description="Test 3: Mixture of Experts")
     parser.add_argument('--quick', action='store_true', help="Run quick validation test")
     parser.add_argument('--test', action='store_true', help="Run unit tests only")
-    parser.add_argument('--restarts', type=int, default=20, help="Number of restarts")
+    parser.add_argument('--restarts', type=int, default=30, help="Number of restarts")
     parser.add_argument('--jobs', type=int, default=8, help="Number of parallel jobs")
     parser.add_argument('--no-parallel', action='store_true', help="Disable parallelization")
 
@@ -481,14 +478,14 @@ if __name__ == "__main__":
         run_all_tests()
     elif args.quick:
         results = run_quick_test()
-        summary = summarize_test_2_results(results)
+        summary = summarize_test_3_results(results)
         print_summary(summary)
     else:
-        results = run_test_2(
+        results = run_test_3(
             n_restarts=args.restarts,
             parallel=not args.no_parallel,
             n_jobs=args.jobs
         )
-        summary = summarize_test_2_results(results)
+        summary = summarize_test_3_results(results)
         print_summary(summary)
         print(f"\nCompleted {len(results)} runs")

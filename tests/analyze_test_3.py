@@ -14,7 +14,7 @@ from scipy import stats
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.logging_utils import ExperimentLogger
+from lookahead_em_evaluation.utils.logging_utils import ExperimentLogger
 
 
 def load_test_3_results(results_dir: str = None) -> List[Dict[str, Any]]:

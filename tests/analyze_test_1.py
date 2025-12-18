@@ -13,12 +13,12 @@ from typing import Dict, List, Any, Optional, Tuple
 from scipy import stats
 import warnings
 
-# Add parent to path for imports
+# Add repo root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.logging_utils import ExperimentLogger
-from utils.metrics import cohens_d, bootstrap_ci
-from utils.plotting import (
+from lookahead_em_evaluation.utils.logging_utils import ExperimentLogger
+from lookahead_em_evaluation.utils.metrics import cohens_d, bootstrap_ci
+from lookahead_em_evaluation.utils.plotting import (
     plot_convergence, plot_time_comparison, plot_success_rates,
     plot_memory_usage, save_figure
 )

@@ -17,8 +17,8 @@ from typing import Dict, List, Any, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from data.generate_gmm import generate_gmm_data, generate_initializations
-from models.gmm import GaussianMixtureModel
+from lookahead_em_evaluation.data.generate_gmm import generate_gmm_data, generate_initializations
+from lookahead_em_evaluation.models.gmm import GaussianMixtureModel
 from tests.test_runner import TestConfig, run_test, run_single_trial
 
 

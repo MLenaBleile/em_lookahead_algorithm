@@ -12,10 +12,10 @@ import numpy as np
 from typing import Dict, List, Any, Optional, Tuple
 from scipy import stats
 
-# Add parent to path for imports
+# Add repo root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.logging_utils import ExperimentLogger
+from lookahead_em_evaluation.utils.logging_utils import ExperimentLogger
 
 
 def load_test_2_results(results_dir: str = None) -> List[Dict[str, Any]]:

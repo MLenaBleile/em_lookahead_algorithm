@@ -1,14 +1,13 @@
 """
-Test 1: High-Dimensional Sparse GMM
+Test 2: Hidden Markov Model
 
-Implements Test 1 from EMPIRICAL_TEST_SPECIFICATIONS.md.
-Tests EM algorithms on a GMM with K=50 components, d=2 dimensions, n=5000 samples.
+Implements Test 2 from EMPIRICAL_TEST_SPECIFICATIONS.md.
+Tests EM algorithms on HMM with S=20 states, V=50 observations, T=1000 steps.
 
 This test evaluates:
-1. Convergence speed (iterations to tolerance)
-2. Final log-likelihood achieved
-3. Computational efficiency
-4. Stability across random restarts
+1. Convergence speed with structured latent space
+2. Preservation of transition sparsity
+3. Algorithm stability with constraint enforcement
 """
 
 import os
@@ -16,15 +15,104 @@ import sys
 import numpy as np
 from typing import Dict, List, Any, Optional
 
-# Add parent to path for imports
+# Add repo root to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from data.generate_gmm import test_1_high_d, generate_initializations
-from models.gmm import GaussianMixtureModel
-from tests.test_runner import TestConfig, run_test, load_results
+from lookahead_em_evaluation.data.generate_hmm import test_2_hmm, generate_hmm_initializations
+from lookahead_em_evaluation.models.hmm import HiddenMarkovModel
+from tests.test_runner import TestConfig, run_test
 
 
-def load_test_1_config(
+class HMMTestAdapter:
+    """
+    Adapter to make HMM compatible with test_runner infrastructure.
+
+    The test_runner expects a model that takes (n_components, n_features) in __init__
+    and works with theta_init having 'mu' key for shape detection.
+    """
+
+    def __init__(self, n_components: int, n_features: int):
+        """
+        Initialize HMM adapter.
+
+        For HMM: n_components = n_states, n_features = n_observations
+        """
+        self.n_states = n_components
+        self.n_obs = n_features
+        self.hmm = HiddenMarkovModel(n_states=n_components, n_observations=n_features)
+
+    def e_step(self, X: np.ndarray, theta: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        """E-step wrapper."""
+        return self.hmm.e_step(X, theta)
+
+    def m_step(self, X: np.ndarray, responsibilities: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        """M-step wrapper."""
+        return self.hmm.m_step(X, responsibilities)
+
+    def log_likelihood(self, X: np.ndarray, theta: Dict[str, np.ndarray]) -> float:
+        """Log-likelihood wrapper."""
+        return self.hmm.log_likelihood(X, theta)
+
+    def compute_Q(self, theta, theta_old, X, responsibilities) -> float:
+        """Q-function wrapper."""
+        return self.hmm.compute_Q(theta, theta_old, X, responsibilities)
+
+    def compute_Q_gradient(self, theta, theta_old, X, responsibilities) -> np.ndarray:
+        """Gradient wrapper."""
+        return self.hmm.compute_Q_gradient(theta, theta_old, X, responsibilities)
+
+    def compute_Q_hessian(self, theta, theta_old, X, responsibilities) -> np.ndarray:
+        """Hessian wrapper."""
+        return self.hmm.compute_Q_hessian(theta, theta_old, X, responsibilities)
+
+
+def generate_hmm_init_wrapper(
+    X: np.ndarray,
+    K: int,
+    strategy: str,
+    n_inits: int,
+    random_state: int
+) -> List[Dict[str, np.ndarray]]:
+    """
+    Wrapper for HMM initialization compatible with test_runner.
+
+    Args:
+        X: Observation sequence
+        K: Number of states (used as n_states)
+        strategy: Initialization strategy
+        n_inits: Number of initializations
+        random_state: Random seed
+
+    Returns:
+        List of theta_init dicts with 'mu' key added for compatibility
+    """
+    # Infer n_obs from the observation sequence
+    n_obs = int(X.max()) + 1
+
+    # Map strategy names
+    if strategy == 'kmeans':
+        strategy = 'empirical'  # Use empirical for HMM
+    elif strategy == 'random':
+        strategy = 'random'
+
+    inits = generate_hmm_initializations(
+        observations=X,
+        n_states=K,
+        n_obs=n_obs,
+        strategy=strategy,
+        n_inits=n_inits,
+        random_state=random_state
+    )
+
+    return inits
+
+
+# Monkey-patch the initialization function for HMM tests
+import lookahead_em_evaluation.data.generate_gmm as gmm_module
+_original_generate_inits = gmm_module.generate_initializations
+
+
+def load_test_2_config(
     n_restarts: int = 20,
     max_iter: int = 1000,
     timeout: float = 600.0,
@@ -32,13 +120,13 @@ def load_test_1_config(
     results_dir: str = None
 ) -> TestConfig:
     """
-    Load Test 1 configuration.
+    Load Test 2 configuration.
 
     Configuration from EMPIRICAL_TEST_SPECIFICATIONS.md:
-    - K = 50 components
-    - d = 2 dimensions
-    - n = 5000 samples
-    - Suboptimal K-means initialization (max_iter=10)
+    - S = 20 states
+    - V = 50 observations
+    - T = 1000 steps
+    - Nearly diagonal transition (0.7 self-transition)
 
     Args:
         n_restarts: Number of random restarts per algorithm
@@ -61,21 +149,24 @@ def load_test_1_config(
         # Standard EM baseline
         {'name': 'standard_em', 'params': {}},
 
-        # Lookahead EM with fixed gamma values
-        {'name': 'lookahead_em', 'params': {'gamma': 0.3}},
-        {'name': 'lookahead_em', 'params': {'gamma': 0.5}},
-        {'name': 'lookahead_em', 'params': {'gamma': 0.7}},
-        {'name': 'lookahead_em', 'params': {'gamma': 0.9}},
-
         # Lookahead EM with adaptive gamma
         {'name': 'lookahead_em', 'params': {'gamma': 'adaptive'}},
+
+        # SQUAREM (uses pure Python fallback)
+        {'name': 'squarem', 'params': {}},
     ]
 
+    # Custom data generator that returns proper format
+    def hmm_data_generator():
+        X, Z, theta_true = test_2_hmm(seed=42)
+        # Return format: (X, z, theta_true)
+        return X, Z, theta_true
+
     config = TestConfig(
-        test_id='test_1_high_d_gmm',
-        data_generator=lambda: test_1_high_d(seed=42),
-        model_class=GaussianMixtureModel,
-        initialization_strategy='kmeans',  # Using K-means with limited iterations
+        test_id='test_2_hmm',
+        data_generator=hmm_data_generator,
+        model_class=HMMTestAdapter,
+        initialization_strategy='random',  # Will be mapped to HMM strategy
         n_restarts=n_restarts,
         algorithms=algorithms,
         max_iter=max_iter,
@@ -87,7 +178,7 @@ def load_test_1_config(
     return config
 
 
-def run_test_1(
+def run_test_2(
     n_restarts: int = 20,
     parallel: bool = True,
     n_jobs: int = 8,
@@ -95,7 +186,7 @@ def run_test_1(
     save_results: bool = True
 ) -> List[Dict[str, Any]]:
     """
-    Run Test 1: High-Dimensional GMM experiment.
+    Run Test 2: HMM experiment.
 
     Args:
         n_restarts: Number of random restarts per algorithm
@@ -107,16 +198,16 @@ def run_test_1(
     Returns:
         List of run result dictionaries
     """
-    config = load_test_1_config(n_restarts=n_restarts)
+    config = load_test_2_config(n_restarts=n_restarts)
 
     if verbose:
         print("=" * 60)
-        print("Test 1: High-Dimensional Sparse GMM")
+        print("Test 2: Hidden Markov Model")
         print("=" * 60)
         print(f"Configuration:")
-        print(f"  K = 50 components")
-        print(f"  d = 2 dimensions")
-        print(f"  n = 5000 samples")
+        print(f"  S = 20 states")
+        print(f"  V = 50 observations")
+        print(f"  T = 1000 steps")
         print(f"  n_restarts = {n_restarts}")
         print(f"  max_iter = {config.max_iter}")
         print(f"  timeout = {config.timeout}s")
@@ -129,22 +220,29 @@ def run_test_1(
                 print(f"    - {algo['name']}")
         print("=" * 60)
 
-    results = run_test(
-        config,
-        parallel=parallel,
-        n_jobs=n_jobs,
-        verbose=verbose,
-        save_results=save_results
-    )
+    # Temporarily replace initialization function
+    gmm_module.generate_initializations = generate_hmm_init_wrapper
+
+    try:
+        results = run_test(
+            config,
+            parallel=parallel,
+            n_jobs=n_jobs,
+            verbose=verbose,
+            save_results=save_results
+        )
+    finally:
+        # Restore original function
+        gmm_module.generate_initializations = _original_generate_inits
 
     return results
 
 
 def run_quick_test(verbose: bool = True) -> List[Dict[str, Any]]:
     """
-    Run a quick version of Test 1 for validation.
+    Run a quick version of Test 2 for validation.
 
-    Uses fewer restarts, iterations, and a smaller K for faster execution.
+    Uses fewer restarts and smaller HMM.
 
     Args:
         verbose: Whether to print progress
@@ -152,50 +250,58 @@ def run_quick_test(verbose: bool = True) -> List[Dict[str, Any]]:
     Returns:
         List of run result dictionaries
     """
-    from data.generate_gmm import generate_gmm_data
+    from lookahead_em_evaluation.data.generate_hmm import test_2_hmm_small, generate_hmm_initializations
 
-    # Use smaller GMM for quick test (K=5 instead of K=50)
+    # Use smaller HMM for quick test
     def quick_data_generator():
-        return generate_gmm_data(n=500, K=5, d=2, seed=42)
+        X, Z, theta_true = test_2_hmm_small(seed=42)
+        return X, Z, theta_true
 
-    # Only test 2 algorithms for speed
+    # Test algorithms including lookahead
     quick_algorithms = [
         {'name': 'standard_em', 'params': {}},
-        {'name': 'lookahead_em', 'params': {'gamma': 0.9}},
+        {'name': 'lookahead_em', 'params': {'gamma': 'adaptive'}},
+        {'name': 'squarem', 'params': {}},
     ]
 
     config = TestConfig(
-        test_id='test_1_quick',
+        test_id='test_2_quick',
         data_generator=quick_data_generator,
-        model_class=GaussianMixtureModel,
-        initialization_strategy='random',  # Harder initialization to show lookahead benefit
+        model_class=HMMTestAdapter,
+        initialization_strategy='random',
         n_restarts=2,
         algorithms=quick_algorithms,
-        max_iter=500,  # More iterations
+        max_iter=100,
         timeout=120.0,
-        tol=1e-4,  # Practical tolerance for GMM
+        tol=1e-4,
         results_dir='/tmp/test_results'
     )
 
     if verbose:
         print("=" * 60)
-        print("Test 1: Quick Validation Run")
-        print("  (Using K=5, n=500 for faster execution)")
+        print("Test 2: Quick Validation Run")
+        print("  (Using S=5, V=10, T=200 for faster execution)")
         print("=" * 60)
 
-    results = run_test(
-        config,
-        parallel=False,  # Sequential for quick test
-        verbose=verbose,
-        save_results=False
-    )
+    # Replace initialization function
+    gmm_module.generate_initializations = generate_hmm_init_wrapper
+
+    try:
+        results = run_test(
+            config,
+            parallel=False,
+            verbose=verbose,
+            save_results=False
+        )
+    finally:
+        gmm_module.generate_initializations = _original_generate_inits
 
     return results
 
 
-def summarize_test_1_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def summarize_test_2_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Generate summary statistics for Test 1 results.
+    Generate summary statistics for Test 2 results.
 
     Args:
         results: List of run result dictionaries
@@ -256,7 +362,7 @@ def summarize_test_1_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 def print_summary(summary: Dict[str, Any]) -> None:
     """Print formatted summary statistics."""
     print("\n" + "=" * 80)
-    print("Test 1 Results Summary")
+    print("Test 2 Results Summary")
     print("=" * 80)
 
     # Sort by final_ll_mean descending
@@ -287,16 +393,17 @@ def print_summary(summary: Dict[str, Any]) -> None:
 
 def test_config_loading():
     """Test that configuration loads correctly."""
-    config = load_test_1_config(n_restarts=5)
+    config = load_test_2_config(n_restarts=5)
 
-    assert config.test_id == 'test_1_high_d_gmm', "Test ID mismatch"
+    assert config.test_id == 'test_2_hmm', "Test ID mismatch"
     assert config.n_restarts == 5, "n_restarts mismatch"
     assert len(config.algorithms) > 0, "No algorithms defined"
 
     # Test data generator
     X, z, theta_true = config.data_generator()
-    assert X.shape == (5000, 2), f"X shape: {X.shape}"
-    assert theta_true['mu'].shape == (50, 2), f"mu shape: {theta_true['mu'].shape}"
+    assert len(X) == 1000, f"X length: {len(X)}"
+    assert theta_true['A'].shape == (20, 20), f"A shape: {theta_true['A'].shape}"
+    assert theta_true['B'].shape == (20, 50), f"B shape: {theta_true['B'].shape}"
 
     print("  PASSED")
 
@@ -320,17 +427,17 @@ def test_summary_generation():
     # Create mock results
     results = [
         {'algorithm': 'standard_em', 'algorithm_params': {}, 'converged': True,
-         'final_ll': -1000.0, 'elapsed_time': 10.0, 'n_iterations': 100, 'error': None},
+         'final_ll': -800.0, 'elapsed_time': 5.0, 'n_iterations': 50, 'error': None},
         {'algorithm': 'standard_em', 'algorithm_params': {}, 'converged': True,
-         'final_ll': -990.0, 'elapsed_time': 9.0, 'n_iterations': 95, 'error': None},
-        {'algorithm': 'lookahead_em', 'algorithm_params': {'gamma': 0.5}, 'converged': True,
-         'final_ll': -985.0, 'elapsed_time': 12.0, 'n_iterations': 50, 'error': None},
+         'final_ll': -790.0, 'elapsed_time': 4.5, 'n_iterations': 45, 'error': None},
+        {'algorithm': 'squarem', 'algorithm_params': {}, 'converged': True,
+         'final_ll': -785.0, 'elapsed_time': 3.0, 'n_iterations': 25, 'error': None},
     ]
 
-    summary = summarize_test_1_results(results)
+    summary = summarize_test_2_results(results)
 
     assert 'standard_em' in summary, "Missing standard_em in summary"
-    assert 'lookahead_em_gamma_0.5' in summary, "Missing lookahead_em in summary"
+    assert 'squarem' in summary, "Missing squarem in summary"
 
     assert summary['standard_em']['n_total'] == 2, "Wrong count for standard_em"
     assert summary['standard_em']['convergence_rate'] == 1.0, "Wrong convergence rate"
@@ -341,7 +448,7 @@ def test_summary_generation():
 def run_all_tests():
     """Run all unit tests."""
     print("=" * 60)
-    print("Running test_1_high_d_gmm.py unit tests")
+    print("Running test_2_hmm.py unit tests")
     print("=" * 60)
 
     print("Testing config loading...")
@@ -361,7 +468,7 @@ def run_all_tests():
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Test 1: High-Dimensional GMM")
+    parser = argparse.ArgumentParser(description="Test 2: HMM")
     parser.add_argument('--quick', action='store_true', help="Run quick validation test")
     parser.add_argument('--test', action='store_true', help="Run unit tests only")
     parser.add_argument('--restarts', type=int, default=20, help="Number of restarts")
@@ -374,14 +481,14 @@ if __name__ == "__main__":
         run_all_tests()
     elif args.quick:
         results = run_quick_test()
-        summary = summarize_test_1_results(results)
+        summary = summarize_test_2_results(results)
         print_summary(summary)
     else:
-        results = run_test_1(
+        results = run_test_2(
             n_restarts=args.restarts,
             parallel=not args.no_parallel,
             n_jobs=args.jobs
         )
-        summary = summarize_test_1_results(results)
+        summary = summarize_test_2_results(results)
         print_summary(summary)
         print(f"\nCompleted {len(results)} runs")
