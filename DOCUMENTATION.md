@@ -86,7 +86,23 @@ Novel algorithm with value-function lookahead.
 - Gradient-based lookahead step with Newton direction
 - Line search for optimal step size
 - Adaptive gamma scheduling (fixed, adaptive, exponential)
+- **L-BFGS option** for faster high-dimensional optimization
 - Fallback to simple extrapolation when gradients unavailable
+
+**Hessian Methods:**
+- `hessian_method='exact'` - Compute full Hessian, solve linear system (O(p³))
+- `hessian_method='lbfgs'` - L-BFGS approximation (O(mp), no Hessian needed)
+
+**When to use L-BFGS:**
+- Model only provides gradients (no `compute_Q_hessian`)
+- High-dimensional problems where Hessian is expensive to compute
+- Memory-constrained environments (O(mp) vs O(p²) storage)
+
+**Example with L-BFGS:**
+```python
+em = LookaheadEM(model, gamma='adaptive', hessian_method='lbfgs', lbfgs_memory=10)
+theta, diagnostics = em.fit(X, theta_init)
+```
 
 **Gamma Schedules:**
 - `gamma=0.5` - Fixed lookahead weight

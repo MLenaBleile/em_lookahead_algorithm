@@ -136,6 +136,15 @@ Comprehensive evaluation with 1,080 runs across 12 configurations:
 
 Results saved in: `results/moe_comprehensive_20251217_234633.json`
 
+## Performance Options
+
+**L-BFGS Mode:** For high-dimensional problems or when Hessian is unavailable:
+```python
+em = LookaheadEM(model, gamma='adaptive', hessian_method='lbfgs', lbfgs_memory=10)
+```
+- Avoids O(p³) Hessian inversion, uses O(mp) gradient history
+- Only requires `compute_Q_gradient` (not `compute_Q_hessian`)
+
 ## Core Hypothesis
 
 Lookahead EM provides advantages when:

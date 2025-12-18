@@ -25,7 +25,10 @@ from utils.timing import ResourceMonitor
 from algorithms.gamma_schedule import (
     GammaSchedule, FixedGamma, AdaptiveGamma, ExponentialGamma, create_schedule
 )
-from algorithms.value_estimation import estimate_V_second_order, estimate_V_simple
+from algorithms.value_estimation import (
+    estimate_V_second_order, estimate_V_simple, estimate_V_lbfgs,
+    LBFGSApproximation
+)
 
 
 class LookaheadEM:
@@ -64,6 +67,8 @@ class LookaheadEM:
         gamma_max: float = 0.9,
         gamma_step: float = 0.05,
         use_second_order: bool = True,
+        hessian_method: str = 'exact',
+        lbfgs_memory: int = 10,
         verbose: bool = False,
         verbose_interval: int = 10
     ):
@@ -77,7 +82,7 @@ class LookaheadEM:
                    - log_likelihood(X, theta) -> float
                    - compute_Q(theta, theta_old, X, resp) -> float (optional)
                    - compute_Q_gradient(theta, theta_old, X, resp) -> array (optional)
-                   - compute_Q_hessian(theta, theta_old, X, resp) -> matrix (optional)
+                   - compute_Q_hessian(theta, theta_old, X, resp) -> matrix (optional, not needed for L-BFGS)
             gamma: Gamma schedule specification:
                    - float: Fixed gamma value
                    - 'adaptive': Linearly increasing gamma
@@ -90,6 +95,11 @@ class LookaheadEM:
             gamma_step: Step size for adaptive schedule.
             use_second_order: If True, use second-order V estimation (requires
                              gradients/Hessians). If False, use one-step V.
+            hessian_method: Method for computing/approximating inverse Hessian:
+                   - 'exact': Compute full Hessian and solve linear system (O(p³))
+                   - 'lbfgs': Use L-BFGS approximation (O(mp), much faster for large p)
+            lbfgs_memory: Number of gradient pairs to store for L-BFGS (m).
+                         Typical values: 5-20. Only used if hessian_method='lbfgs'.
             verbose: If True, print progress during fitting.
             verbose_interval: Print progress every N iterations.
         """
@@ -97,8 +107,15 @@ class LookaheadEM:
         self.n_candidates = n_candidates
         self.candidate_scale = candidate_scale
         self.use_second_order = use_second_order
+        self.hessian_method = hessian_method
+        self.lbfgs_memory = lbfgs_memory
         self.verbose = verbose
         self.verbose_interval = verbose_interval
+
+        # Initialize L-BFGS if using that method
+        self._lbfgs = None
+        if hessian_method == 'lbfgs':
+            self._lbfgs = LBFGSApproximation(memory_size=lbfgs_memory)
 
         # Set up gamma schedule
         if isinstance(gamma, GammaSchedule):
@@ -147,6 +164,14 @@ class LookaheadEM:
         """
         # Reset gamma schedule for new run
         self.gamma_schedule.reset()
+
+        # Reset L-BFGS history for new run
+        if self._lbfgs is not None:
+            self._lbfgs.reset()
+
+        # Track previous gradient for L-BFGS updates
+        self._prev_theta_flat = None
+        self._prev_grad = None
 
         # Initialize monitoring
         monitor = ResourceMonitor(interval=0.1)
@@ -335,9 +360,22 @@ class LookaheadEM:
         theta_mstep = self.model.m_step(X, responsibilities)
         theta_mstep = self._project_to_feasible(theta_mstep)
 
-        # If we have gradient methods, use gradient-based lookahead
-        if self._has_hessian_methods():
+        # Choose method based on hessian_method setting
+        if self.hessian_method == 'lbfgs' and self._has_gradient_methods():
+            # Use L-BFGS approximation (faster, no Hessian needed)
+            theta_next, grad_diag = self._lbfgs_step(
+                X, theta_current, theta_mstep, responsibilities, gamma
+            )
+            step_diag.update(grad_diag)
+        elif self._has_hessian_methods():
+            # Use exact Hessian (original method)
             theta_next, grad_diag = self._gradient_based_step(
+                X, theta_current, theta_mstep, responsibilities, gamma
+            )
+            step_diag.update(grad_diag)
+        elif self._has_gradient_methods() and self._lbfgs is not None:
+            # Fallback to L-BFGS if we have gradients but no Hessian
+            theta_next, grad_diag = self._lbfgs_step(
                 X, theta_current, theta_mstep, responsibilities, gamma
             )
             step_diag.update(grad_diag)
@@ -685,6 +723,109 @@ class LookaheadEM:
         """Check if model has gradient/Hessian methods."""
         return (hasattr(self.model, 'compute_Q_gradient') and
                 hasattr(self.model, 'compute_Q_hessian'))
+
+    def _has_gradient_methods(self) -> bool:
+        """Check if model has gradient methods (Hessian not required)."""
+        return hasattr(self.model, 'compute_Q_gradient')
+
+    def _lbfgs_step(
+        self,
+        X: np.ndarray,
+        theta_current: Dict[str, np.ndarray],
+        theta_mstep: Dict[str, np.ndarray],
+        responsibilities: Any,
+        gamma: float
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+        """
+        Compute lookahead step using L-BFGS approximation.
+
+        Uses L-BFGS to approximate the inverse Hessian, avoiding the O(p³)
+        cost of computing and inverting the full Hessian.
+
+        Complexity: O(mp) where m is memory size, vs O(p³) for exact.
+
+        Args:
+            X: Data matrix.
+            theta_current: Current parameters.
+            theta_mstep: M-step result.
+            responsibilities: E-step responsibilities.
+            gamma: Lookahead weight.
+
+        Returns:
+            Tuple of (theta_next, diagnostics).
+        """
+        diag = {
+            'gradient_norm': 0.0,
+            'step_size': 0.0,
+            'used_lbfgs': True,
+            'lbfgs_pairs': len(self._lbfgs.s_history) if self._lbfgs else 0
+        }
+
+        try:
+            # Compute gradient at M-step result
+            grad = self.model.compute_Q_gradient(
+                theta_mstep, theta_mstep, X, responsibilities
+            )
+            grad = np.asarray(grad).flatten()
+            grad_norm = np.linalg.norm(grad)
+            diag['gradient_norm'] = float(grad_norm)
+
+            # If gradient is very small, M-step is near-optimal
+            if grad_norm < 1e-10:
+                return theta_mstep, diag
+
+            # Convert current theta to flat vector for L-BFGS update
+            theta_flat = self._theta_to_flat(theta_mstep)
+
+            # Update L-BFGS with previous step's (s, y) pair if available
+            if self._prev_theta_flat is not None and self._prev_grad is not None:
+                s = theta_flat - self._prev_theta_flat
+                y = grad - self._prev_grad
+                self._lbfgs.update(s, y)
+
+            # Store current state for next iteration's L-BFGS update
+            self._prev_theta_flat = theta_flat.copy()
+            self._prev_grad = grad.copy()
+
+            # Compute direction using L-BFGS approximation
+            # direction ≈ -H⁻¹ @ grad (without computing H)
+            direction = self._lbfgs.compute_direction(grad, negate=True)
+
+            # Scale step by gamma and use line search
+            step_size = self._line_search(
+                X, theta_current, theta_mstep, direction,
+                responsibilities, gamma, max_step=gamma
+            )
+            diag['step_size'] = step_size
+            diag['lbfgs_pairs'] = len(self._lbfgs.s_history)
+
+            # Apply step to get new parameters
+            theta_next = self._apply_step(theta_mstep, direction, step_size)
+
+            return theta_next, diag
+
+        except Exception as e:
+            diag['error'] = str(e)
+            return theta_mstep, diag
+
+    def _theta_to_flat(self, theta: Dict[str, np.ndarray]) -> np.ndarray:
+        """Convert theta dict to flat parameter vector (for L-BFGS)."""
+        # Use same order as _apply_step
+        if 'mu' in theta:
+            param_keys = ['mu']
+        elif 'A' in theta:
+            param_keys = ['pi_0', 'A', 'B']
+        elif 'beta' in theta:
+            param_keys = ['gamma', 'beta', 'sigma']
+        else:
+            param_keys = sorted(theta.keys())
+
+        parts = []
+        for key in param_keys:
+            if key in theta:
+                parts.append(np.asarray(theta[key]).flatten())
+
+        return np.concatenate(parts) if parts else np.array([])
 
     def _generate_candidates(
         self,

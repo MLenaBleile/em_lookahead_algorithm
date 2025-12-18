@@ -12,14 +12,23 @@ where:
 - ∇Q is the gradient of Q w.r.t. θ
 - H_Q is the Hessian of Q w.r.t. θ (negative definite)
 
+Methods available:
+- Second-order: Exact Hessian computation (expensive for large p)
+- L-BFGS: Approximate H^(-1) using gradient history (O(mp) instead of O(p²))
+
 Example usage:
     >>> V, diagnostics = estimate_V_second_order(model, X, theta)
     >>> print(f"V(θ) = {V:.4f}, Q(θ|θ) = {diagnostics['Q_self']:.4f}")
+
+    >>> # Using L-BFGS approximation (faster for high-dimensional problems)
+    >>> lbfgs = LBFGSApproximation(memory_size=10)
+    >>> direction = lbfgs.compute_direction(gradient)
 """
 
 import numpy as np
-from typing import Dict, Tuple, Any, Optional
+from typing import Dict, Tuple, Any, Optional, List
 import warnings
+from collections import deque
 
 
 def estimate_V_second_order(
@@ -251,6 +260,277 @@ def estimate_V_one_step(
     diagnostics['improvement'] = Q_next - Q_self
 
     return Q_next, diagnostics
+
+
+# =============================================================================
+# L-BFGS Approximation for Inverse Hessian
+# =============================================================================
+
+class LBFGSApproximation:
+    """
+    L-BFGS (Limited-memory BFGS) approximation for the inverse Hessian.
+
+    Instead of computing and storing the full Hessian matrix H (O(p²) storage,
+    O(p³) inversion), L-BFGS maintains a history of gradient and parameter
+    differences to approximate H⁻¹ directly.
+
+    Complexity:
+    - Storage: O(mp) where m is memory size (typically 5-20)
+    - Direction computation: O(mp) using two-loop recursion
+    - Compare to exact: O(p²) storage, O(p³) solve
+
+    For Lookahead EM, this approximates the Newton direction -H⁻¹∇Q without
+    computing or storing the full Hessian.
+
+    Example:
+        >>> lbfgs = LBFGSApproximation(memory_size=10)
+        >>> for iteration in range(max_iter):
+        ...     grad = compute_gradient(theta)
+        ...     direction = lbfgs.compute_direction(grad)
+        ...     theta_new = theta + step_size * direction
+        ...     lbfgs.update(theta_new - theta, grad_new - grad)
+        ...     theta = theta_new
+
+    Reference:
+        Nocedal & Wright (2006), "Numerical Optimization", Chapter 7
+    """
+
+    def __init__(
+        self,
+        memory_size: int = 10,
+        initial_scale: float = 1.0,
+        min_curvature: float = 1e-10
+    ):
+        """
+        Initialize L-BFGS approximation.
+
+        Args:
+            memory_size: Number of (s, y) pairs to store (m). Typical values: 5-20.
+                        Larger m = better approximation but more memory/computation.
+            initial_scale: Initial scaling for H₀ (identity scaled by this factor).
+                          Will be auto-updated based on curvature.
+            min_curvature: Minimum curvature (y^T s) to accept an update.
+                          Prevents numerical issues from near-zero curvature.
+        """
+        self.memory_size = memory_size
+        self.initial_scale = initial_scale
+        self.min_curvature = min_curvature
+
+        # Storage for (s, y) pairs: s = θ_{k+1} - θ_k, y = g_{k+1} - g_k
+        self.s_history: deque = deque(maxlen=memory_size)
+        self.y_history: deque = deque(maxlen=memory_size)
+        self.rho_history: deque = deque(maxlen=memory_size)  # rho = 1 / (y^T s)
+
+        # Current scale for H₀
+        self.gamma = initial_scale
+
+    def reset(self):
+        """Clear the history (call when starting a new optimization)."""
+        self.s_history.clear()
+        self.y_history.clear()
+        self.rho_history.clear()
+        self.gamma = self.initial_scale
+
+    def update(
+        self,
+        s: np.ndarray,
+        y: np.ndarray
+    ) -> bool:
+        """
+        Update L-BFGS history with a new (s, y) pair.
+
+        Args:
+            s: Parameter difference s = θ_{k+1} - θ_k
+            y: Gradient difference y = ∇f_{k+1} - ∇f_k
+               For Q-function: y = ∇Q(θ_{k+1}) - ∇Q(θ_k)
+
+        Returns:
+            True if update was accepted, False if skipped due to curvature.
+
+        Note:
+            For maximization (like Q-function), gradients point uphill.
+            The curvature condition y^T s > 0 should hold for valid steps.
+        """
+        s = np.asarray(s).flatten()
+        y = np.asarray(y).flatten()
+
+        # Compute curvature
+        ys = np.dot(y, s)
+
+        # Skip update if curvature is too small (would cause numerical issues)
+        if abs(ys) < self.min_curvature:
+            return False
+
+        # For maximization problems, we expect ys < 0 (Hessian is negative definite)
+        # L-BFGS formula works with |ys|
+        rho = 1.0 / ys
+
+        # Store the pair
+        self.s_history.append(s.copy())
+        self.y_history.append(y.copy())
+        self.rho_history.append(rho)
+
+        # Update scaling factor: gamma = s^T y / y^T y
+        yy = np.dot(y, y)
+        if yy > 1e-15:
+            self.gamma = ys / yy
+
+        return True
+
+    def compute_direction(
+        self,
+        gradient: np.ndarray,
+        negate: bool = True
+    ) -> np.ndarray:
+        """
+        Compute search direction using L-BFGS two-loop recursion.
+
+        Computes: direction = -H⁻¹ @ gradient (if negate=True)
+                  direction = H⁻¹ @ gradient  (if negate=False)
+
+        For Lookahead EM optimization, use negate=True to get descent direction.
+
+        Args:
+            gradient: Current gradient vector ∇Q(θ)
+            negate: If True, returns -H⁻¹g (descent direction for minimization,
+                   ascent for maximization with negative definite H)
+
+        Returns:
+            Search direction vector (same shape as gradient)
+
+        Algorithm:
+            Two-loop recursion (Nocedal & Wright Algorithm 7.4):
+            1. First loop: compute intermediate q using history
+            2. Apply initial Hessian approximation H₀
+            3. Second loop: compute final direction r
+        """
+        g = np.asarray(gradient).flatten()
+        n_stored = len(self.s_history)
+
+        # If no history yet, return scaled gradient
+        if n_stored == 0:
+            direction = self.gamma * g
+            return -direction if negate else direction
+
+        # Two-loop recursion
+        q = g.copy()
+        alpha = np.zeros(n_stored)
+
+        # First loop (backward through history)
+        for i in range(n_stored - 1, -1, -1):
+            alpha[i] = self.rho_history[i] * np.dot(self.s_history[i], q)
+            q = q - alpha[i] * self.y_history[i]
+
+        # Apply initial Hessian approximation: r = H₀ @ q = gamma * q
+        r = self.gamma * q
+
+        # Second loop (forward through history)
+        for i in range(n_stored):
+            beta = self.rho_history[i] * np.dot(self.y_history[i], r)
+            r = r + (alpha[i] - beta) * self.s_history[i]
+
+        return -r if negate else r
+
+    def get_diagnostics(self) -> Dict[str, Any]:
+        """Get diagnostic information about the L-BFGS state."""
+        return {
+            'memory_size': self.memory_size,
+            'pairs_stored': len(self.s_history),
+            'gamma': self.gamma,
+            'curvatures': [1.0 / rho if abs(rho) > 1e-15 else 0.0
+                          for rho in self.rho_history]
+        }
+
+
+def estimate_V_lbfgs(
+    model: Any,
+    X: np.ndarray,
+    theta: Dict[str, np.ndarray],
+    lbfgs: LBFGSApproximation,
+    responsibilities: Optional[np.ndarray] = None,
+    gradient_tol: float = 1e-10
+) -> Tuple[float, Dict[str, Any]]:
+    """
+    Estimate lookahead value V(θ) using L-BFGS approximation.
+
+    Similar to estimate_V_second_order but uses L-BFGS to approximate
+    the inverse Hessian instead of computing it explicitly.
+
+    V(θ) ≈ Q(θ|θ) + 0.5 × ∇Q^T H_approx^(-1) ∇Q
+
+    This is much faster for high-dimensional problems:
+    - O(mp) instead of O(p²) storage
+    - O(mp) instead of O(p³) computation
+
+    Args:
+        model: Statistical model with compute_Q and compute_Q_gradient methods.
+               Does NOT need compute_Q_hessian.
+        X: Data matrix of shape (n_samples, n_features).
+        theta: Current parameter dictionary.
+        lbfgs: LBFGSApproximation instance (maintains history across calls).
+        responsibilities: Pre-computed responsibilities (optional).
+        gradient_tol: If gradient norm < this, skip improvement computation.
+
+    Returns:
+        Tuple of (V, diagnostics)
+
+    Example:
+        >>> lbfgs = LBFGSApproximation(memory_size=10)
+        >>> V, diag = estimate_V_lbfgs(model, X, theta, lbfgs)
+    """
+    diagnostics = {
+        'Q_self': None,
+        'grad_norm': 0.0,
+        'direction_norm': 0.0,
+        'lbfgs_pairs_used': len(lbfgs.s_history),
+        'lbfgs_gamma': lbfgs.gamma
+    }
+
+    # Compute responsibilities if not provided
+    if responsibilities is None:
+        try:
+            responsibilities = model.e_step(X, theta)
+        except Exception as e:
+            warnings.warn(f"E-step failed: {e}. Returning 0 for V.")
+            return 0.0, diagnostics
+
+    # Compute Q(θ|θ)
+    try:
+        Q_self = model.compute_Q(theta, theta, X, responsibilities)
+        diagnostics['Q_self'] = Q_self
+    except Exception as e:
+        warnings.warn(f"Q computation failed: {e}. Returning 0 for V.")
+        return 0.0, diagnostics
+
+    # Compute gradient
+    try:
+        grad_Q = model.compute_Q_gradient(theta, theta, X, responsibilities)
+        grad_Q = np.asarray(grad_Q).flatten()
+        grad_norm = np.linalg.norm(grad_Q)
+        diagnostics['grad_norm'] = float(grad_norm)
+    except Exception as e:
+        warnings.warn(f"Gradient computation failed: {e}. Returning Q_self.")
+        return Q_self, diagnostics
+
+    # If gradient is very small, we're at/near optimum
+    if grad_norm < gradient_tol:
+        return Q_self, diagnostics
+
+    # Use L-BFGS to compute direction = -H⁻¹ @ grad
+    direction = lbfgs.compute_direction(grad_Q, negate=True)
+    diagnostics['direction_norm'] = float(np.linalg.norm(direction))
+
+    # Compute V(θ) = Q(θ|θ) + 0.5 * grad^T * direction
+    # Note: direction = -H⁻¹ @ grad, so grad^T @ direction = -grad^T @ H⁻¹ @ grad
+    # For negative definite H, this should be positive (improvement)
+    improvement = -0.5 * np.dot(grad_Q, direction)
+
+    # Clamp negative improvements
+    if improvement < 0:
+        improvement = 0.0
+
+    V = Q_self + improvement
+    return V, diagnostics
 
 
 # =============================================================================
