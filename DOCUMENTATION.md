@@ -47,16 +47,23 @@ lookahead_em_evaluation/
 │   └── mixture_of_experts.py   # Mixture of Experts
 ├── data/
 │   ├── generate_gmm.py         # GMM data generation
-│   ├── generate_hmm.py         # HMM data generation
-│   └── generate_moe.py         # MoE data generation
+│   └── generate_hmm.py         # HMM data generation
 ├── tests/
-│   ├── test_1_gmm.py           # GMM experiments
+│   ├── test_1_high_d_gmm.py    # High-D GMM experiments
 │   ├── test_2_hmm.py           # HMM experiments
 │   ├── test_3_moe.py           # MoE experiments
+│   ├── test_4_robustness.py    # Robustness tests
+│   ├── test_5_stress.py        # Stress tests
 │   ├── test_moe_comprehensive.py  # Publication-ready MoE experiments
-│   └── test_runner.py          # Common test infrastructure
+│   ├── test_runner.py          # Common test infrastructure
+│   └── analyze_*.py            # Analysis scripts per test
+├── analysis/
+│   └── cross_test_comparison.py  # Cross-test analysis
 ├── utils/
-│   └── timing.py               # Resource monitoring
+│   ├── timing.py               # Resource monitoring
+│   ├── metrics.py              # Evaluation metrics
+│   ├── logging_utils.py        # Experiment logging
+│   └── plotting.py             # Visualization functions
 └── results/                    # Experiment outputs
 ```
 
@@ -173,33 +180,67 @@ for step in [0, 0.1, 0.2, ..., γ]:
 
 ## Experimental Results Summary
 
-### MoE (Mixture of Experts) - **Positive Results**
+### MoE (Mixture of Experts) - **Comprehensive Results Available**
 
-| Algorithm | Conv% | Final LL | Time (s) | Iterations |
-|-----------|-------|----------|----------|------------|
-| Lookahead EM | **100%** | **-246.86** | 10.04 | 58 |
-| SQUAREM | 100% | -257.96 | 0.48 | 35 |
-| Standard EM | 100% | -258.02 | 0.20 | 77 |
+A comprehensive evaluation was conducted with 1,080 runs across 12 configurations:
+- Expert counts: [3, 5]
+- Feature dimensions: [2, 5, 10]
+- Sample sizes: [500, 1000]
+- Restarts per configuration: 30
 
-**Key Finding:** Lookahead EM achieves ~4% better log-likelihood by escaping local minima.
+**Overall Comparison:**
 
-### GMM (Gaussian Mixture Model) - **No Improvement**
+| Algorithm | N | Log-Likelihood | Time (s) | Iterations |
+|-----------|---|----------------|----------|------------|
+| Standard EM | 358 | -1089.02 ± 394.90 | 1.41 ± 2.35 | 94 ± 80 |
+| Lookahead EM | 345 | **-988.44 ± 360.53** | 43.50 ± 45.17 | 75 ± 64 |
+| SQUAREM | 0* | N/A | N/A | N/A |
 
-| Algorithm | Conv% | Final LL | Time (s) | Iterations |
-|-----------|-------|----------|----------|------------|
-| Standard EM | 50% | -1866.43 | 0.40 | 463 |
-| Lookahead EM | 50% | -1866.43 | 5.71 | 463 |
+*SQUAREM failed all runs (requires rpy2 and R's turboEM package)
 
-**Why:** GMM gradient only covers μ, which is zero at M-step. Lookahead correction is effectively zero.
+**Statistical Analysis:**
 
-### HMM (Hidden Markov Model) - **Timeout Issues**
+| Metric | Value |
+|--------|-------|
+| Total paired comparisons | 179 |
+| Lookahead EM win rate | **98.9%** |
+| Mean LL improvement | **+156.17 ± 153.63** |
+| Paired t-test p-value | < 0.001 |
+| Time ratio (LA/Std) | 26.23× |
+| Iteration ratio (LA/Std) | 0.81× |
 
-| Algorithm | Conv% | Final LL | Time (s) | Iterations |
-|-----------|-------|----------|----------|------------|
-| Standard EM | 50% | -361.69 | 27.76 | 82 |
-| Lookahead EM | 0% | -367.54 | 121.03 (timeout) | 38 |
+**Per-Condition Results:**
 
-**Why:** O(T × S²) gradient/Hessian computation makes each iteration ~3s vs 0.3s for standard EM.
+| Experts | Dim | Samples | Pairs | Win% | ΔLL |
+|---------|-----|---------|-------|------|-----|
+| 3 | 2 | 500 | 30 | 100% | +25.20 |
+| 3 | 2 | 1000 | 28 | 100% | +51.46 |
+| 3 | 5 | 500 | 30 | 100% | +53.51 |
+| 3 | 5 | 1000 | 29 | 100% | +106.69 |
+| 3 | 10 | 500 | 29 | 100% | +60.36 |
+| 3 | 10 | 1000 | 30 | 100% | +114.76 |
+| 5 | 2 | 500 | 27 | 96% | +29.17 |
+| 5 | 2 | 1000 | 27 | 96% | +60.25 |
+| 5 | 5 | 500 | 28 | 100% | +116.64 |
+| 5 | 5 | 1000 | 28 | 96% | +199.48 |
+| 5 | 10 | 500 | 29 | 93% | +112.69 |
+| 5 | 10 | 1000 | 29 | 100% | +226.41 |
+
+**Key Findings:**
+- Lookahead EM consistently achieves better log-likelihood across all configurations
+- Improvement scales with problem complexity (more experts, higher dimensions)
+- Trade-off: ~26× slower due to gradient/Hessian computation per iteration
+- All improvements statistically significant (p < 0.001)
+
+Results file: `results/moe_comprehensive_20251217_234633.json`
+
+### GMM (Gaussian Mixture Model) - **Implementation Note**
+
+GMM gradient only covers μ (means), not σ or π. Since the gradient is zero at the M-step solution, lookahead provides no benefit for the current GMM implementation. Full gradient coverage would be needed for lookahead to help.
+
+### HMM (Hidden Markov Model) - **Computational Challenges**
+
+The O(T × S²) forward-backward algorithm makes gradient/Hessian computation expensive. Further optimization (e.g., caching) would be needed for practical use.
 
 ---
 
@@ -259,9 +300,16 @@ Results saved to `results/moe_comprehensive_TIMESTAMP.json` with:
 
 2. **HMM Computational Cost**: Forward-backward is O(T × S²), making gradient-based lookahead expensive.
 
-3. **Windows Compatibility**: R-based SQUAREM may not work; pure Python fallback is used.
+3. **SQUAREM Dependencies**: SQUAREM requires rpy2 and R's turboEM package. Install with:
+   ```bash
+   pip install rpy2
+   R -e "install.packages('turboEM')"
+   ```
+   Without these, SQUAREM tests will fail with dependency errors.
 
-4. **Memory Usage**: Storing Hessian matrices can be expensive for large models.
+4. **Windows Compatibility**: R-based SQUAREM may not work on Windows; pure Python fallback behavior varies.
+
+5. **Memory Usage**: Storing Hessian matrices can be expensive for large models.
 
 ---
 

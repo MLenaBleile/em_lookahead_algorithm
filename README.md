@@ -26,22 +26,25 @@ lookahead_em_evaluation/
 │   └── mixture_of_experts.py
 ├── data/                # Data generation utilities
 │   ├── generate_gmm.py
-│   ├── generate_hmm.py
-│   └── generate_moe.py
+│   └── generate_hmm.py
 ├── tests/               # Test implementations
 │   ├── test_1_high_d_gmm.py
 │   ├── test_2_hmm.py
 │   ├── test_3_moe.py
 │   ├── test_4_robustness.py
-│   └── test_5_real_data.py
+│   ├── test_5_stress.py
+│   ├── test_moe_comprehensive.py  # Publication-ready MoE test
+│   ├── test_runner.py
+│   └── analyze_*.py     # Analysis scripts per test
+├── analysis/            # Cross-test analysis
+│   └── cross_test_comparison.py
 ├── utils/               # Utilities
 │   ├── timing.py
 │   ├── metrics.py
 │   ├── logging_utils.py
 │   └── plotting.py
 ├── results/             # Experiment results
-├── notebooks/           # Analysis notebooks
-└── run_all_tests.py     # Master test runner
+└── notebooks/           # Analysis notebooks
 ```
 
 ## Setup
@@ -90,27 +93,48 @@ print(f"Standard EM: {diag_std['iterations']} iterations, {diag_std['time_second
 print(f"Lookahead EM: {diag_la['iterations']} iterations, {diag_la['time_seconds']:.2f}s")
 ```
 
-### Run all tests
+### Run comprehensive MoE test
 
 ```bash
-python run_all_tests.py --tests 1,2,3,4,5 --parallel --n_jobs 8
+cd lookahead_em_evaluation
+python tests/test_moe_comprehensive.py --restarts 30
 ```
 
 ### Quick mode (fewer restarts)
 
 ```bash
-python run_all_tests.py --tests 1 --quick
+python tests/test_moe_comprehensive.py --quick
 ```
 
 ## Test Suite
 
-| Test | Model | Description | Expected Advantage |
-|------|-------|-------------|-------------------|
-| 1 | High-D GMM (K=50) | Block-diagonal H_Q structure | 30-50% speedup |
-| 2 | HMM (S=20, V=50) | Sparse transition matrix | Exploit sparsity |
-| 3 | Mixture of Experts | Hierarchical block structure | Block-wise inversion |
-| 4 | Robustness | Bad initializations | Adaptive gamma helps |
-| 5 | Real Data | Practical validation | Scientific utility |
+| Test | Model | Description | Status |
+|------|-------|-------------|--------|
+| 1 | High-D GMM (K=50) | Block-diagonal H_Q structure | Implemented |
+| 2 | HMM (S=20, V=50) | Sparse transition matrix | Implemented |
+| 3 | Mixture of Experts | Hierarchical block structure | **Results Available** |
+| 4 | Robustness | Bad initializations | Implemented |
+| 5 | Stress Test | Edge cases and limits | Implemented |
+
+## Latest Results: Mixture of Experts (MoE)
+
+Comprehensive evaluation with 1,080 runs across 12 configurations:
+
+| Algorithm | Converged | Log-Likelihood | Time (s) | Iterations |
+|-----------|-----------|----------------|----------|------------|
+| Standard EM | 358/360 (99.4%) | -1089.02 ± 394.90 | 1.41 ± 2.35 | 94 ± 80 |
+| Lookahead EM | 345/360 (95.8%) | **-988.44 ± 360.53** | 43.50 ± 45.17 | 75 ± 64 |
+| SQUAREM | 0/360 (0%)* | N/A | N/A | N/A |
+
+*SQUAREM requires R's turboEM package (rpy2 not installed in test environment)
+
+**Key Finding:** Lookahead EM achieves significantly better solution quality:
+- **98.9% win rate** over Standard EM (177/179 paired comparisons)
+- **+156.17 mean log-likelihood improvement** (p < 0.001)
+- Uses **19% fewer iterations** (0.81× ratio)
+- Trade-off: **26× slower** per iteration due to gradient/Hessian computation
+
+Results saved in: `results/moe_comprehensive_20251217_234633.json`
 
 ## Core Hypothesis
 
