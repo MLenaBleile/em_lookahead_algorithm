@@ -552,8 +552,10 @@ class PurePythonSQUAREM:
     def _theta_diff(self, theta1: Dict, theta2: Dict) -> np.ndarray:
         """Compute flattened difference theta1 - theta2."""
         parts = []
-        for key in theta1:
-            parts.append((theta1[key] - theta2[key]).flatten())
+        # Use sorted keys for consistent ordering
+        for key in sorted(theta1.keys()):
+            if key in theta2:
+                parts.append((theta1[key] - theta2[key]).flatten())
         return np.concatenate(parts)
 
     def _theta_update(self, theta: Dict, r: np.ndarray, v: np.ndarray, alpha: float) -> Dict:
@@ -562,7 +564,8 @@ class PurePythonSQUAREM:
 
         theta_new = {}
         idx = 0
-        for key in theta:
+        # Use sorted keys for consistent ordering (must match _theta_diff)
+        for key in sorted(theta.keys()):
             size = theta[key].size
             shape = theta[key].shape
             theta_new[key] = theta[key] + update[idx:idx+size].reshape(shape)
@@ -571,18 +574,31 @@ class PurePythonSQUAREM:
         return theta_new
 
     def _project_theta(self, theta: Dict) -> Dict:
-        """Project theta to feasible region."""
+        """Project theta to feasible region for GMM, HMM, and MoE models."""
         theta_proj = {}
 
         for key, val in theta.items():
             if key == 'pi':
-                # Simplex projection
+                # GMM mixing weights: simplex projection
                 pi = np.clip(val, 1e-10, None)
                 theta_proj[key] = pi / pi.sum()
+            elif key == 'pi_0':
+                # HMM initial state distribution: simplex projection
+                pi_0 = np.clip(val, 1e-10, None)
+                theta_proj[key] = pi_0 / pi_0.sum()
+            elif key == 'A':
+                # HMM transition matrix: row-stochastic
+                A = np.clip(val, 1e-10, None)
+                theta_proj[key] = A / A.sum(axis=1, keepdims=True)
+            elif key == 'B':
+                # HMM emission matrix: row-stochastic
+                B = np.clip(val, 1e-10, None)
+                theta_proj[key] = B / B.sum(axis=1, keepdims=True)
             elif key == 'sigma':
-                # Positive constraint
+                # Positive constraint (GMM variances, MoE noise)
                 theta_proj[key] = np.clip(val, 1e-6, None)
             else:
+                # Unconstrained parameters (mu, beta, gamma for MoE)
                 theta_proj[key] = val
 
         return theta_proj

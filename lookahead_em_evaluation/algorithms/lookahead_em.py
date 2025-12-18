@@ -392,7 +392,12 @@ class LookaheadEM:
             step_diag['best_q'] = self._compute_Q(
                 theta_next, theta_current, X, responsibilities
             )
-            if self._has_hessian_methods():
+            # Choose V estimation method based on hessian_method setting
+            if self.hessian_method == 'lbfgs' and self._lbfgs is not None:
+                step_diag['best_v'], _ = estimate_V_lbfgs(
+                    self.model, X, theta_next, self._lbfgs
+                )
+            elif self._has_hessian_methods():
                 step_diag['best_v'], _ = estimate_V_second_order(
                     self.model, X, theta_next
                 )
@@ -533,7 +538,12 @@ class LookaheadEM:
                     theta_candidate, theta_current, X, responsibilities
                 )
 
-                if self._has_hessian_methods():
+                # Choose V estimation method based on hessian_method setting
+                if self.hessian_method == 'lbfgs' and self._lbfgs is not None:
+                    V_val, _ = estimate_V_lbfgs(
+                        self.model, X, theta_candidate, self._lbfgs
+                    )
+                elif self._has_hessian_methods():
                     V_val, _ = estimate_V_second_order(
                         self.model, X, theta_candidate
                     )
