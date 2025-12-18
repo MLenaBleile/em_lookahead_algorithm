@@ -1,0 +1,64 @@
+% Overall Algorithm Comparison
+\begin{table}[htbp]
+\centering
+\caption{Overall comparison of Standard EM and Lookahead EM on Mixture of Experts}
+\label{tab:moe_overall}
+\begin{tabular}{lcccc}
+\toprule
+Algorithm & N & Log-Likelihood & Time (s) & Iterations \\
+\midrule
+Standard EM & 358 & $-1089.02 \pm 394.90$ & $1.41 \pm 2.35$ & $94 \pm 80$ \\
+Lookahead EM & 345 & $-988.44 \pm 360.53$ & $43.50 \pm 45.17$ & $75 \pm 64$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% Per-Condition Comparison
+\begin{table}[htbp]
+\centering
+\caption{Per-condition comparison: Lookahead EM vs Standard EM}
+\label{tab:moe_conditions}
+\begin{tabular}{cccrccr}
+\toprule
+$K$ & $D$ & $N$ & Pairs & Win\% & $\Delta$LL & $p$-value \\
+\midrule
+3 & 10 & 1000 & 30 & 100\% & $+114.76$ & $<$0.001 \\
+3 & 10 & 500 & 29 & 100\% & $+60.36$ & $<$0.001 \\
+3 & 2 & 1000 & 28 & 100\% & $+51.46$ & $<$0.001 \\
+3 & 2 & 500 & 30 & 100\% & $+25.20$ & $<$0.001 \\
+3 & 5 & 1000 & 29 & 100\% & $+106.69$ & $<$0.001 \\
+3 & 5 & 500 & 30 & 100\% & $+53.51$ & $<$0.001 \\
+5 & 10 & 1000 & 29 & 100\% & $+226.41$ & $<$0.001 \\
+5 & 10 & 500 & 29 & 93\% & $+112.69$ & $<$0.001 \\
+5 & 2 & 1000 & 27 & 96\% & $+60.25$ & $<$0.001 \\
+5 & 2 & 500 & 27 & 96\% & $+29.17$ & $<$0.001 \\
+5 & 5 & 1000 & 28 & 96\% & $+199.48$ & $<$0.001 \\
+5 & 5 & 500 & 28 & 100\% & $+116.64$ & $<$0.001 \\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}
+\small
+\item $K$: number of experts, $D$: feature dimensionality, $N$: sample size.
+\item $\Delta$LL: mean log-likelihood improvement (Lookahead $-$ Standard).
+\item $p$-values from paired $t$-test.
+\end{tablenotes}
+\end{table}
+
+% Summary Statistics
+\begin{table}[htbp]
+\centering
+\caption{Summary of Lookahead EM improvements over Standard EM}
+\label{tab:moe_summary}
+\begin{tabular}{lr}
+\toprule
+Metric & Value \\
+\midrule
+Total paired comparisons & 179 \\
+Lookahead EM win rate & 98.9\% \\
+Mean LL improvement & $+156.17 \pm 153.63$ \\
+Paired $t$-test $p$-value & $<$0.001 \\
+Time ratio (LA/Std) & 26.23$\times$ \\
+Iteration ratio (LA/Std) & 0.81$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
