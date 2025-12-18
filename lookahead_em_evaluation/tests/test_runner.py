@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from algorithms.standard_em import StandardEM
 from algorithms.lookahead_em import LookaheadEM
+from algorithms.squarem_wrapper import get_squarem, PurePythonSQUAREM
 from utils.logging_utils import ExperimentLogger
 from utils.timing import ResourceMonitor
 
@@ -49,7 +50,7 @@ def create_algorithm(algo_config: Dict[str, Any], model: Any) -> Any:
         model: model instance (e.g., GaussianMixtureModel)
 
     Returns:
-        Algorithm instance (StandardEM or LookaheadEM)
+        Algorithm instance (StandardEM, LookaheadEM, or SQUAREM)
     """
     name = algo_config.get('name', 'standard_em')
     params = algo_config.get('params', {})
@@ -58,6 +59,8 @@ def create_algorithm(algo_config: Dict[str, Any], model: Any) -> Any:
         return StandardEM(model=model, **params)
     elif name in ['lookahead_em', 'lookahead']:
         return LookaheadEM(model=model, **params)
+    elif name in ['squarem', 'SQUAREM']:
+        return get_squarem(model)
     else:
         raise ValueError(f"Unknown algorithm: {name}")
 
@@ -114,10 +117,25 @@ def run_single_trial(
     }
 
     try:
-        # Create model instance
+        # Create model instance - detect dimensions from theta_init
+        # Support different model types: GMM (mu), HMM (A), MoE (gamma)
+        if 'mu' in theta_init:
+            n_components = theta_init['mu'].shape[0]
+            n_features = theta_init['mu'].shape[1]
+        elif 'A' in theta_init:
+            # HMM: A is (n_states, n_states), B is (n_states, n_obs)
+            n_components = theta_init['A'].shape[0]
+            n_features = theta_init['B'].shape[1] if 'B' in theta_init else theta_init['A'].shape[1]
+        elif 'gamma' in theta_init:
+            # MoE: gamma is (n_experts, n_features+1)
+            n_components = theta_init['gamma'].shape[0]
+            n_features = theta_init['gamma'].shape[1] - 1  # Subtract intercept
+        else:
+            raise ValueError(f"Cannot determine model dimensions from theta_init keys: {theta_init.keys()}")
+
         model = test_config.model_class(
-            n_components=theta_init['mu'].shape[0],
-            n_features=theta_init['mu'].shape[1]
+            n_components=n_components,
+            n_features=n_features
         )
 
         # Create algorithm
@@ -152,8 +170,20 @@ def run_single_trial(
 
         # Compute parameter error if true parameters available
         if theta_true is not None:
-            mu_error = np.linalg.norm(theta_final['mu'] - theta_true['mu']) / np.linalg.norm(theta_true['mu'])
-            result['mu_error'] = mu_error
+            try:
+                if 'mu' in theta_final and 'mu' in theta_true:
+                    mu_error = np.linalg.norm(theta_final['mu'] - theta_true['mu']) / np.linalg.norm(theta_true['mu'])
+                    result['param_error'] = mu_error
+                elif 'A' in theta_final and 'A' in theta_true:
+                    # HMM: compute error on transition matrix
+                    A_error = np.linalg.norm(theta_final['A'] - theta_true['A']) / np.linalg.norm(theta_true['A'])
+                    result['param_error'] = A_error
+                elif 'beta' in theta_final and 'beta' in theta_true:
+                    # MoE: compute error on expert weights
+                    beta_error = np.linalg.norm(theta_final['beta'] - theta_true['beta']) / np.linalg.norm(theta_true['beta'])
+                    result['param_error'] = beta_error
+            except Exception:
+                pass  # Skip parameter error if computation fails
 
     except Exception as e:
         result['error'] = str(e)
@@ -193,7 +223,25 @@ def run_test(
         print(f"Generating data for {test_config.test_id}...")
 
     X, z, theta_true = test_config.data_generator()
-    n, d = X.shape
+
+    # Handle different data formats:
+    # - 2D array (GMM): X has shape (n, d)
+    # - 1D array (HMM): X has shape (T,)
+    # - Tuple (MoE): X is (X_features, y)
+    if isinstance(X, tuple):
+        # MoE case: X is (X_features, y)
+        X_features, _ = X
+        n, d = X_features.shape
+    elif hasattr(X, 'ndim'):
+        if X.ndim == 2:
+            n, d = X.shape
+        else:
+            n = len(X)
+            d = 1  # 1D sequence
+    else:
+        n = len(X)
+        d = 1
+
     K = len(np.unique(z))
 
     if verbose:
@@ -217,7 +265,12 @@ def run_test(
     for seed in range(test_config.n_restarts):
         theta_init = initializations[seed]
         for algo_config in test_config.algorithms:
-            trials.append((test_config, algo_config, seed, X.copy(), theta_init.copy(), theta_true))
+            # Handle tuple data (e.g., MoE with (X, y))
+            if isinstance(X, tuple):
+                X_copy = tuple(arr.copy() if hasattr(arr, 'copy') else arr for arr in X)
+            else:
+                X_copy = X.copy()
+            trials.append((test_config, algo_config, seed, X_copy, theta_init.copy(), theta_true))
 
     total_trials = len(trials)
     if verbose:
@@ -271,6 +324,10 @@ def run_test(
         logger = ExperimentLogger(results_dir)
 
         for result in results:
+            # Skip results that don't have required fields (e.g., from parallel errors)
+            if 'algorithm' not in result:
+                continue
+
             # Convert numpy arrays to lists for JSON serialization
             result_copy = result.copy()
             if result_copy.get('theta_final') is not None:
@@ -281,7 +338,7 @@ def run_test(
             if result_copy.get('ll_history') is not None:
                 result_copy['ll_history'] = [float(x) for x in result_copy['ll_history']]
 
-            logger.log_run(result_copy['algorithm'], result_copy)
+            logger.log_run(result_copy.get('algorithm', 'unknown'), result_copy)
 
         if verbose:
             print(f"Results saved to {results_dir}/")

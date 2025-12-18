@@ -237,6 +237,25 @@ class ExperimentLogger:
 
         return sorted(algorithms)
 
+    def load_all(self) -> List[Dict[str, Any]]:
+        """
+        Load all results from all JSONL files in the base directory.
+
+        This is useful when the logger is pointed directly at a test results
+        directory (e.g., results/test_1_high_d_gmm/) rather than the parent
+        results directory.
+
+        Returns:
+            List of all run result dictionaries.
+        """
+        results = []
+
+        # Load from all .jsonl files in base_dir
+        for file_path in self.base_dir.glob('*.jsonl'):
+            results.extend(self._load_jsonl(file_path))
+
+        return results
+
     def list_tests(self) -> List[str]:
         """
         List all test IDs with saved results.
