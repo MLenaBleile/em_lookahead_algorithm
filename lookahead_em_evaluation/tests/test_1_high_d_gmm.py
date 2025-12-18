@@ -161,7 +161,7 @@ def run_quick_test(verbose: bool = True) -> List[Dict[str, Any]]:
     # Only test 2 algorithms for speed
     quick_algorithms = [
         {'name': 'standard_em', 'params': {}},
-        {'name': 'lookahead_em', 'params': {'gamma': 0.5}},
+        {'name': 'lookahead_em', 'params': {'gamma': 0.9}},
     ]
 
     config = TestConfig(
