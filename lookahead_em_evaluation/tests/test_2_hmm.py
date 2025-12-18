@@ -8,6 +8,10 @@ This test evaluates:
 1. Convergence speed with structured latent space
 2. Preservation of transition sparsity
 3. Algorithm stability with constraint enforcement
+
+Note: Lookahead EM uses L-BFGS approximation (hessian_method='lbfgs') to avoid
+the expensive O(T × S²) Hessian computation in HMM. This makes it significantly
+faster while still benefiting from gradient-based lookahead.
 """
 
 import os
@@ -149,8 +153,12 @@ def load_test_2_config(
         # Standard EM baseline
         {'name': 'standard_em', 'params': {}},
 
-        # Lookahead EM with adaptive gamma
-        {'name': 'lookahead_em', 'params': {'gamma': 'adaptive'}},
+        # Lookahead EM with L-BFGS (faster - avoids expensive Hessian computation)
+        {'name': 'lookahead_em', 'params': {
+            'gamma': 'adaptive',
+            'hessian_method': 'lbfgs',
+            'lbfgs_memory': 10
+        }},
 
         # SQUAREM (uses pure Python fallback)
         {'name': 'squarem', 'params': {}},
@@ -214,8 +222,11 @@ def run_test_2(
         print(f"  tol = {config.tol}")
         print(f"  Algorithms: {len(config.algorithms)}")
         for algo in config.algorithms:
-            if algo.get('params'):
-                print(f"    - {algo['name']} ({algo['params']})")
+            params = algo.get('params', {})
+            if params:
+                # Format params nicely
+                param_str = ', '.join(f"{k}={v}" for k, v in params.items())
+                print(f"    - {algo['name']} ({param_str})")
             else:
                 print(f"    - {algo['name']}")
         print("=" * 60)
@@ -257,10 +268,18 @@ def run_quick_test(verbose: bool = True) -> List[Dict[str, Any]]:
         X, Z, theta_true = test_2_hmm_small(seed=42)
         return X, Z, theta_true
 
-    # Test algorithms including lookahead
+    # Test algorithms including lookahead variants
     quick_algorithms = [
         {'name': 'standard_em', 'params': {}},
-        {'name': 'lookahead_em', 'params': {'gamma': 'adaptive'}},
+
+        # L-BFGS Lookahead (faster - avoids Hessian computation)
+        {'name': 'lookahead_em', 'params': {
+            'gamma': 'adaptive',
+            'hessian_method': 'lbfgs',
+            'lbfgs_memory': 10
+        }},
+
+        # SQUAREM (pure Python fallback)
         {'name': 'squarem', 'params': {}},
     ]
 
