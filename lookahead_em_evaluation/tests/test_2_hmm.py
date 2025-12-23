@@ -156,7 +156,7 @@ def load_test_2_config(
         # Lookahead EM with L-BFGS (faster - avoids expensive Hessian computation)
         {'name': 'lookahead_em', 'params': {
             'gamma': 'adaptive',
-            'hessian_method': 'lbfgs',
+            'hessian_method': 'exact',
             'lbfgs_memory': 10
         }},
 
