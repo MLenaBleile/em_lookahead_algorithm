@@ -1,6 +1,6 @@
-# Lookahead EM Empirical Evaluation
+# Lookahead EM Algorithm
 
-Systematic evaluation of the lookahead EM algorithm vs. existing acceleration methods for expectation-maximization.
+An optimization algorithm which can outperform SoA on Mixture of Experts models. Includes comprehensive validation suite of simulations.
 
 ## Overview
 
