@@ -68,6 +68,8 @@ pip install "lookahead-em[r]"
 
 ## Quick Start
 
+> **See the full tutorial:** [doc/QUICKSTART.md](doc/QUICKSTART.md)
+
 ### Mixture of Experts Example
 
 ```python
@@ -141,6 +143,12 @@ Lookahead EM provides advantages when:
 1. **H_Q is structured** (sparse, block-diagonal, low-rank)
 2. **Problem is high-dimensional** (p > 100)
 3. **Adaptive gamma schedule** balances exploration and exploitation
+
+## Documentation
+
+- [Quick Start Guide](doc/QUICKSTART.md) - Installation and tutorials
+- [Full Documentation](DOCUMENTATION.md) - Algorithm details and implementation notes
+- [Test Specifications](doc/EMPIRICAL_TEST_SPECIFICATIONS.md) - Experiment design
 
 ## References
 
