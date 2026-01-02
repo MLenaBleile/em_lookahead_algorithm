@@ -8,7 +8,6 @@ This project implements empirical tests comparing:
 - **Standard EM** (baseline)
 - **Lookahead EM** (novel algorithm with adaptive gamma scheduling)
 - **SQUAREM** (sequence extrapolation via R's turboEM)
-- **Quasi-Newton EM** (second-order observed likelihood methods)
 
 ## Project Structure
 
@@ -153,7 +152,6 @@ Lookahead EM provides advantages when:
 ## References
 
 - Varadhan & Roland (2008): SQUAREM method
-- Jamshidian & Jennrich (1997): Quasi-Newton EM
 - Dempster, Laird & Rubin (1977): Original EM algorithm
 
 ## License
