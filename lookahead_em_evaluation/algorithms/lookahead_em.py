@@ -21,11 +21,11 @@ import copy
 import numpy as np
 from typing import Dict, List, Tuple, Any, Optional, Union
 
-from utils.timing import ResourceMonitor
-from algorithms.gamma_schedule import (
+from ..utils.timing import ResourceMonitor
+from .gamma_schedule import (
     GammaSchedule, FixedGamma, AdaptiveGamma, ExponentialGamma, create_schedule
 )
-from algorithms.value_estimation import estimate_V_second_order, estimate_V_simple
+from .value_estimation import estimate_V_second_order, estimate_V_simple
 
 
 class LookaheadEM:

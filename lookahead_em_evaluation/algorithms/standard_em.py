@@ -16,7 +16,7 @@ import copy
 import numpy as np
 from typing import Dict, List, Tuple, Any, Optional, Union
 
-from utils.timing import ResourceMonitor
+from ..utils.timing import ResourceMonitor
 
 
 class StandardEM:

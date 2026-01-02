@@ -44,50 +44,73 @@ lookahead_em_evaluation/
 └── run_all_tests.py     # Master test runner
 ```
 
-## Setup
+## Installation
 
-### Using pip
+### From GitHub (recommended)
 
 ```bash
-pip install -r requirements.txt
+pip install git+https://github.com/MLenaBleile/em_lookahead_algorithm.git
 ```
 
-### Using conda
+### From source
 
 ```bash
-conda env create -f environment.yml
-conda activate lookahead_em
+git clone https://github.com/MLenaBleile/em_lookahead_algorithm.git
+cd em_lookahead_algorithm
+pip install -e .
+```
+
+### Optional: R integration for SQUAREM
+
+```bash
+pip install "lookahead-em[r]"
 ```
 
 ## Quick Start
 
-### Run a simple test
+### Mixture of Experts Example
 
 ```python
-from algorithms.standard_em import StandardEM
-from algorithms.lookahead_em import LookaheadEM
-from models.gmm import GaussianMixtureModel
-from data.generate_gmm import generate_gmm_data
+from lookahead_em_evaluation import (
+    LookaheadEM, MixtureOfExperts, generate_moe_data, initialize_equal_gates
+)
+
+# Generate sample data
+X, y, experts, theta_true = generate_moe_data(n=500, n_experts=3, n_features=2)
+
+# Fit with Lookahead EM
+model = MixtureOfExperts(n_experts=3, n_features=2)
+theta_init = initialize_equal_gates(n_experts=3, n_features=2)
+em = LookaheadEM(model, gamma='adaptive')
+theta_final, diagnostics = em.fit((X, y), theta_init)
+
+print(f"Converged in {diagnostics['iterations']} iterations")
+print(f"Final log-likelihood: {diagnostics['likelihood_history'][-1]:.2f}")
+```
+
+### Gaussian Mixture Model Example
+
+```python
+from lookahead_em_evaluation import (
+    LookaheadEM, StandardEM, GaussianMixtureModel, generate_gmm_data
+)
 
 # Generate test data
 X, z, theta_true = generate_gmm_data(n=1000, K=5, d=2, separation=4, sigma=1.0, seed=42)
 
 # Initialize model
 model = GaussianMixtureModel(n_components=5, n_features=2)
-
-# Initialize parameters
 theta_init = model.initialize_kmeans(X, random_state=42)
 
-# Run standard EM
+# Compare Standard EM vs Lookahead EM
 standard_em = StandardEM(model)
 theta_std, diag_std = standard_em.fit(X, theta_init)
 
-# Run lookahead EM with adaptive gamma
 lookahead_em = LookaheadEM(model, gamma='adaptive')
 theta_la, diag_la = lookahead_em.fit(X, theta_init)
 
-print(f"Standard EM: {diag_std['iterations']} iterations, {diag_std['time_seconds']:.2f}s")
-print(f"Lookahead EM: {diag_la['iterations']} iterations, {diag_la['time_seconds']:.2f}s")
+print(f"Standard EM: {diag_std['iterations']} iterations")
+print(f"Lookahead EM: {diag_la['iterations']} iterations")
 ```
 
 ### Run all tests

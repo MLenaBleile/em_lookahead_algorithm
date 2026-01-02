@@ -7,9 +7,12 @@ This module contains model implementations:
 - MixtureOfExperts: MoE with hierarchical block structure
 """
 
-from typing import TYPE_CHECKING
+from .gmm import GaussianMixtureModel
+from .hmm import HiddenMarkovModel
+from .mixture_of_experts import MixtureOfExperts
 
-if TYPE_CHECKING:
-    from .gmm import GaussianMixtureModel
-    from .hmm import HiddenMarkovModel
-    from .mixture_of_experts import MixtureOfExperts
+__all__ = [
+    "GaussianMixtureModel",
+    "HiddenMarkovModel",
+    "MixtureOfExperts",
+]

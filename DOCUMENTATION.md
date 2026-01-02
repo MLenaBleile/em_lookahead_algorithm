@@ -130,6 +130,29 @@ Squared Iterative Methods acceleration.
 **Gradient Coverage:** Full (γ, β, σ)
 - Result: **Lookahead EM finds better optima than Standard EM**
 
+**Example Application: Regional House Price Prediction**
+
+MoE models excel when the input-output relationship varies across different regions of the input space. Consider predicting house prices based on features like square footage and age:
+
+```
+Input: x = [sq_ft, age, ...]
+Output: y = price
+
+Expert 1 (Urban): price = β₁ᵀx + ε   (high base, small sq_ft coefficient)
+Expert 2 (Suburban): price = β₂ᵀx + ε (medium base, large sq_ft coefficient)
+Expert 3 (Rural): price = β₃ᵀx + ε   (low base, land-focused)
+
+Gating: P(expert | x) = softmax(γᵀx)  (learns which expert applies where)
+```
+
+The gating network learns to route samples to the appropriate expert based on input features. Unlike a single linear model, MoE captures that a 2000 sq ft house has very different pricing dynamics in Manhattan vs rural Montana.
+
+**Other MoE use cases:**
+- **Personalized recommendations**: Different user segments follow different preference patterns
+- **Medical diagnosis**: Disease progression varies by patient subpopulations
+- **Financial modeling**: Market regimes (bull/bear) require different predictive models
+- **Speech recognition**: Different acoustic models for different speakers/accents
+
 ---
 
 ## Key Implementation Details
