@@ -135,7 +135,7 @@ python run_all_tests.py --tests 1 --quick
 | 4 | Robustness | Bad initializations | Adaptive gamma helps |
 | 5 | Real Data | Practical validation | Scientific utility |
 
-## Core Hypothesis
+## Use case
 
 Lookahead EM provides advantages when:
 1. **H_Q is structured** (sparse, block-diagonal, low-rank)
