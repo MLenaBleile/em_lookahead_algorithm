@@ -15,7 +15,7 @@ import sys
 import json
 import numpy as np
 from datetime import datetime
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional
 from itertools import product
 from tqdm import tqdm
 
@@ -42,8 +42,8 @@ class MoEModelWrapper:
     def e_step(self, data, theta):
         return self.moe.e_step(data, theta)
 
-    def m_step(self, data, responsibilities):
-        return self.moe.m_step(data, responsibilities)
+    def m_step(self, data, responsibilities, theta_current: Optional[Dict[str, np.ndarray]] = None):
+        return self.moe.m_step(data, responsibilities, theta_current)
 
     def log_likelihood(self, data, theta):
         return self.moe.log_likelihood(data, theta)

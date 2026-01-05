@@ -48,9 +48,9 @@ class MoETestAdapter:
         """E-step wrapper."""
         return self.moe.e_step(data, theta)
 
-    def m_step(self, data: Tuple[np.ndarray, np.ndarray], responsibilities: np.ndarray) -> Dict[str, np.ndarray]:
+    def m_step(self, data: Tuple[np.ndarray, np.ndarray], responsibilities: np.ndarray, theta_current: Optional[Dict[str, np.ndarray]] = None) -> Dict[str, np.ndarray]:
         """M-step wrapper."""
-        return self.moe.m_step(data, responsibilities)
+        return self.moe.m_step(data, responsibilities, theta_current)
 
     def log_likelihood(self, data: Tuple[np.ndarray, np.ndarray], theta: Dict[str, np.ndarray]) -> float:
         """Log-likelihood wrapper."""
