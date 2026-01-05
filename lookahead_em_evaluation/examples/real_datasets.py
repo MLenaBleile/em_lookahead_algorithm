@@ -272,6 +272,7 @@ def run_single_experiment(
         DatasetResult with comparison
     """
     import time
+    import copy
     n_samples, n_features = X.shape
 
     if verbose:
@@ -292,12 +293,12 @@ def run_single_experiment(
     data = (X, y)
 
     for restart in range(n_restarts):
-        # Initialize
+        # Initialize - use deep copy to avoid shared array references
         theta_init = initialize_random(n_experts, n_features, random_state=seed + restart)
 
         # Standard EM
         t0 = time.time()
-        theta_std = theta_init.copy()
+        theta_std = copy.deepcopy(theta_init)
         for _ in range(max_iter):
             resp = model.e_step(data, theta_std)
             theta_std = model.m_step(data, resp, theta_std)
@@ -318,7 +319,7 @@ def run_single_experiment(
             )
             theta_la, diagnostics = em.fit(
                 data,
-                theta_init.copy(),
+                copy.deepcopy(theta_init),
                 max_iter=max_iter,
                 tol=1e-6
             )
