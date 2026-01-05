@@ -327,12 +327,12 @@ class LookaheadEM:
 
         # If gamma is very small, just use standard M-step
         if gamma < 1e-8:
-            theta_next = self.model.m_step(X, responsibilities)
+            theta_next = self._call_m_step(X, responsibilities, theta_current)
             theta_next = self._project_to_feasible(theta_next)
             return theta_next, step_diag
 
         # Get standard M-step result
-        theta_mstep = self.model.m_step(X, responsibilities)
+        theta_mstep = self._call_m_step(X, responsibilities, theta_current)
         theta_mstep = self._project_to_feasible(theta_mstep)
 
         # If we have gradient methods, use gradient-based lookahead
@@ -747,6 +747,33 @@ class LookaheadEM:
         perturbed = value + np.abs(np.random.randn(*value.shape)) * self.candidate_scale * 0.1
         perturbed = np.maximum(perturbed, 1e-10)
         return perturbed / perturbed.sum()
+
+    def _call_m_step(
+        self,
+        X: np.ndarray,
+        responsibilities: np.ndarray,
+        theta_current: Dict[str, np.ndarray]
+    ) -> Dict[str, np.ndarray]:
+        """
+        Call model's m_step with backwards compatibility.
+
+        Some models (like MoE) need theta_current for warm-starting,
+        while others (like GMM) don't accept this parameter.
+
+        Args:
+            X: Data.
+            responsibilities: E-step responsibilities.
+            theta_current: Current parameters (for models that need it).
+
+        Returns:
+            Updated parameters from M-step.
+        """
+        try:
+            # Try with theta_current (for MoE and similar models)
+            return self.model.m_step(X, responsibilities, theta_current)
+        except TypeError:
+            # Fall back to without theta_current (for GMM, HMM)
+            return self.model.m_step(X, responsibilities)
 
     def _project_to_feasible(
         self,
